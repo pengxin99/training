@@ -70,15 +70,37 @@ directory, run inside the container:
 python convert.py /data/cache/ml-20mx16x32 --seed 0
 ```
 
-#### Running the training
+#### Running the training and inference
 
 Assuming the expanded dataset together with the generated test negative samples files are 
 visible in the container under `/data/cache/ml-20mx16x32` directory, run inside the container:
 
 ```
+./run_and_time.sh -h
+
+usage: bash ./run_and_time.sh [[[-s seed ] [-inf inference] [-model pretrained_model]] | [-h]]
+
+optional arguments:
+  -h, --help                    show this help message and exit
+  -s, --seed                    random seed
+  -inf, --inference             doing inference
+                                    default: False
+  -model, --pretrained_model    inference iteration
+                                    default: None
+
+````
+
+For `training`, only need to provide seed:
+
+```
 ./run_and_time.sh <SEED>
 ```
 
+For `inference`, inf and model both needed:
+
+```
+./run_and_time.sh -s 0 -inf True -model './$PATH_TO_PRETRAINED_MODEL'
+```
 Seed 0 has been shown to converge deterministically.
 
 **Note** The current data generation pipeline is run on CPU and is currently

@@ -11,6 +11,8 @@ import pickle
 from convert import generate_negatives
 from convert import generate_negatives_flat
 from convert import CACHE_FN
+import warnings
+import sys
 
 import tqdm
 import numpy as np
@@ -21,6 +23,8 @@ import utils
 from neumf import NeuMF
 
 from mlperf_compliance import mlperf_log
+
+warnings.filterwarnings("ignore")
 
 def parse_args():
     parser = ArgumentParser(description="Train a Nerual Collaborative"
@@ -68,30 +72,37 @@ def parse_args():
                         help='pre-process data on cpu to save memory')
     parser.add_argument('--random_negatives', action='store_true',
                         help='do not check train negatives for existence in dataset')
+    parser.add_argument('--save_model', type=bool, default=False,
+                        help='if save model, sava path is ./model/')
+    parser.add_argument('--inf', type=bool, default=False,
+                        help='Only do inferece performance, default is False.')
+    parser.add_argument('--pretrained_model', type=str,
+                        help='model file path for inference')                   
     return parser.parse_args()
 
 
 # TODO: val_epoch is not currently supported on cpu
-def val_epoch(model, x, y, dup_mask, real_indices, K, samples_per_user, num_user, output=None,
-              epoch=None, loss=None):
+def val_epoch(model, x, y, dup_mask, real_indices, K, samples_per_user, num_user, use_cuda=False, 
+              output=None, epoch=None, loss=None):
 
     start = datetime.now()
     log_2 = math.log(2)
 
     model.eval()
-    hits = torch.tensor(0., device='cuda')
-    ndcg = torch.tensor(0., device='cuda')
+    device = torch.device('cuda') if use_cuda else torch.device('cpu')
+    hits = torch.tensor(0.).to(device)
+    ndcg = torch.tensor(0.).to(device)
 
     with torch.no_grad():
         for i, (u,n) in enumerate(zip(x,y)):
-            res = model(u.cuda().view(-1), n.cuda().view(-1), sigmoid=True).detach().view(-1,samples_per_user)
+            res = model(u.to(device).view(-1), n.to(device).view(-1), sigmoid=True).detach().view(-1,samples_per_user)
             # set duplicate results for the same item to -1 before topk
             res[dup_mask[i]] = -1
             out = torch.topk(res,K)[1]
             # topk in pytorch is stable(if not sort)
             # key(item):value(predicetion) pairs are ordered as original key(item) order
             # so we need the first position of real item(stored in real_indices) to check if it is in topk
-            ifzero = (out == real_indices[i].cuda().view(-1,1))
+            ifzero = (out == real_indices[i].to(device).view(-1,1))
             hits += ifzero.sum()
             ndcg += (log_2 / (torch.nonzero(ifzero)[:,1].view(-1).to(torch.float)+2).log_()).sum()
 
@@ -152,7 +163,8 @@ def main():
     mlperf_log.ncf_print(key=mlperf_log.INPUT_STEP_EVAL_NEG_GEN)
 
     # sync worker before timing.
-    torch.cuda.synchronize()
+    if use_cuda:
+        torch.cuda.synchronize()
 
     #===========================================================================
     #== The clock starts on loading the preprocessed data. =====================
@@ -223,12 +235,12 @@ def main():
             for a, b in zip(indices, indices_order)] #[0,1,3,2]
     # produce -1 mask
     dup_mask = [(l[:,0:-1] == l[:,1:]) for l in sorted_items]
-    dup_mask = [torch.cat((torch.zeros_like(a, dtype=torch.uint8), b),dim=1)
+    dup_mask = [torch.cat((torch.zeros_like(a, dtype=torch.uint8), b.type(torch.ByteTensor)),dim=1)
             for a, b in zip(test_pos, dup_mask)]
     dup_mask = [torch.gather(a,1,b.sort()[1])
             for a, b in zip(dup_mask, stable_indices)]
     # produce real sample indices to later check in topk
-    sorted_items, indices = zip(*[(a != b).sort()
+    sorted_items, indices = zip(*[(a != b).type(torch.ByteTensor).sort()
             for a, b in zip(test_items, test_pos)])
     sum_item_indices = [(a.float()) + (b.float())/len(b[0])
             for a, b in zip(sorted_items, indices)]
@@ -250,7 +262,8 @@ def main():
     real_indices = torch.cat(real_indices)
 
     # make pytorch memory behavior more consistent later
-    torch.cuda.empty_cache()
+    if use_cuda:
+        torch.cuda.empty_cache()
 
     mlperf_log.ncf_print(key=mlperf_log.INPUT_BATCH_SIZE, value=args.batch_size)
     mlperf_log.ncf_print(key=mlperf_log.INPUT_ORDER)  # we shuffled later with randperm
@@ -302,9 +315,41 @@ def main():
     test_items = test_items.split(users_per_valid_batch)
     dup_mask = dup_mask.split(users_per_valid_batch)
     real_indices = real_indices.split(users_per_valid_batch)
+    
+    #===========================================================================
+    #======== Doing Inference here                        =====================
+    #===========================================================================
+    if args.inf:
+        print('Now Only doing Inference!')
+        epoch = 0
+        if args.pretrained_model is None:
+            print('Pretrained model is mandatory for inference.')
+            sys.exit()
 
-    hr, ndcg = val_epoch(model, test_users, test_items, dup_mask, real_indices, args.topk, samples_per_user=samples_per_user,
-                         num_user=nb_users)
+        filename = os.path.join(args.pretrained_model)
+        if not use_cuda:
+            print('---load and map model to CPU---')
+            model = torch.load(filename, map_location='cpu')
+        print(model)
+        print("{} parameters".format(utils.count_parameters(model)))
+
+        begin = time.time()
+        mlperf_log.ncf_print(key=mlperf_log.EVAL_START, value=0)
+        hr, ndcg = val_epoch(model, test_users, test_items, dup_mask, real_indices, args.topk, use_cuda=use_cuda,
+                             samples_per_user=samples_per_user, num_user=nb_users)
+        val_time = time.time() - begin
+        print('Inference at epoch {epoch} model: HR@{K} = {hit_rate:.4f}, NDCG@{K} = {ndcg:.4f}, val_time = {val_time:.2f}'
+              .format(epoch=epoch, K=args.topk, hit_rate=hr,
+                      ndcg=ndcg, val_time=val_time, ))
+
+        mlperf_log.ncf_print(key=mlperf_log.EVAL_ACCURACY, value={"epoch": epoch, "value": hr})
+        mlperf_log.ncf_print(key=mlperf_log.EVAL_TARGET, value=args.threshold)
+        mlperf_log.ncf_print(key=mlperf_log.EVAL_STOP, value=epoch)
+        
+        return
+
+    hr, ndcg = val_epoch(model, test_users, test_items, dup_mask, real_indices, args.topk, use_cuda=use_cuda,
+                         samples_per_user=samples_per_user, num_user=nb_users)
     print('Initial HR@{K} = {hit_rate:.4f}, NDCG@{K} = {ndcg:.4f}'
           .format(K=args.topk, hit_rate=hr, ndcg=ndcg))
     success = False
@@ -319,7 +364,7 @@ def main():
         st = timeit.default_timer()
         if args.random_negatives:
             neg_users = train_users.repeat(args.negative_samples)
-            neg_items = torch.empty_like(neg_users, dtype=torch.int64).random_(0, nb_items)
+            neg_items = torch.empty_like(neg_users, dtype=torch.int64).random_(0, int(nb_items))
         else:
             negatives = generate_negatives(
                 sampler,
@@ -365,9 +410,14 @@ def main():
 
         for i in qbar:
             # selecting input from prepared data
-            user = epoch_users_list[i].cuda()
-            item = epoch_items_list[i].cuda()
-            label = epoch_label_list[i].view(-1,1).cuda()
+            if use_cuda:
+                user = epoch_users_list[i].cuda()
+                item = epoch_items_list[i].cuda()
+                label = epoch_label_list[i].view(-1,1).cuda()
+            else:
+                user = epoch_users_list[i]
+                item = epoch_items_list[i]
+                label = epoch_label_list[i].view(-1,1)
 
             for p in model.parameters():
                 p.grad = None
@@ -385,8 +435,8 @@ def main():
 
         mlperf_log.ncf_print(key=mlperf_log.EVAL_START, value=epoch)
 
-        hr, ndcg = val_epoch(model, test_users, test_items, dup_mask, real_indices, args.topk, samples_per_user=samples_per_user,
-                             num_user=nb_users, output=valid_results_file, epoch=epoch, loss=loss.data.item())
+        hr, ndcg = val_epoch(model, test_users, test_items, dup_mask, real_indices, args.topk,  use_cuda=use_cuda, 
+                             samples_per_user=samples_per_user, num_user=nb_users, output=valid_results_file, epoch=epoch, loss=loss.data.item())
 
         val_time = time.time() - begin
         print('Epoch {epoch}: HR@{K} = {hit_rate:.4f}, NDCG@{K} = {ndcg:.4f},'
@@ -396,6 +446,13 @@ def main():
                       ndcg=ndcg, train_time=train_time,
                       val_time=val_time, loss=loss.data.item(),
                       neg_gen_time=neg_gen_time, shuffle_time=shuffle_time))
+
+        # save model per epoch
+        if args.save_model:
+            save_dir = './model/'
+            print("save %d epoch model to %s" % (epoch, save_dir))
+            state = {'net':model.state_dict(), 'optimizer':optimizer.state_dict(), 'epoch':epoch}
+            torch.save(state, save_dir + str(epoch) + 'epoch_model.pth')
 
         mlperf_log.ncf_print(key=mlperf_log.EVAL_ACCURACY, value={"epoch": epoch, "value": hr})
         mlperf_log.ncf_print(key=mlperf_log.EVAL_TARGET, value=args.threshold)
