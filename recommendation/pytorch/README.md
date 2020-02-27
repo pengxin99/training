@@ -84,7 +84,7 @@ optional arguments:
   -h, --help                    show this help message and exit
   -s, --seed                    random seed
   -inf, --inference             doing inference
-                                    default: False
+                                    default: 0
   -model, --pretrained_model    inference iteration
                                     default: None
 
@@ -99,7 +99,7 @@ For `training`, only need to provide seed:
 For `inference`, inf and model both needed:
 
 ```
-./run_and_time.sh -s 0 -inf True -model './$PATH_TO_PRETRAINED_MODEL'
+./run_and_time.sh -s 0 -inf 1 -model './$PATH_TO_PRETRAINED_MODEL'
 ```
 Seed 0 has been shown to converge deterministically.
 

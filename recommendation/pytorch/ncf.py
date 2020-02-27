@@ -74,9 +74,9 @@ def parse_args():
                         help='do not check train negatives for existence in dataset')
     parser.add_argument('--save_model', type=bool, default=False,
                         help='if save model, sava path is ./model/')
-    parser.add_argument('--inf', type=bool, default=False,
+    parser.add_argument('--inf', type=int, default=0,
                         help='Only do inferece performance, default is False.')
-    parser.add_argument('--pretrained_model', type=str,
+    parser.add_argument('--pretrained_model', type=str, default="",
                         help='model file path for inference')                   
     return parser.parse_args()
 
@@ -132,6 +132,8 @@ def val_epoch(model, x, y, dup_mask, real_indices, K, samples_per_user, num_user
 def main():
 
     args = parse_args()
+    print(args)
+
     if args.seed is not None:
         print("Using seed = {}".format(args.seed))
         torch.manual_seed(args.seed)

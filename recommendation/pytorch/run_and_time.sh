@@ -17,7 +17,7 @@ usage()
     echo "usage: bash ./run_and_time.sh [[[-s seed ] [-inf inference] [-model pretrained_model]] | [-h]]"
 }
 SEED=0
-IS_INF=False
+IS_INF=0
 PRETRAINED_MODEL=None
 
 while [ $# -gt 0 ]; do
