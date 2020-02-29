@@ -25,7 +25,7 @@ class BoxList(object):
             )
         if bbox.size(-1) != 4:
             raise ValueError(
-                "last dimenion of bbox should have a "
+                "last dimension of bbox should have a "
                 "size of 4, got {}".format(bbox.size(-1))
             )
         if mode not in ("xyxy", "xywh"):
@@ -166,7 +166,7 @@ class BoxList(object):
 
     def crop(self, box):
         """
-        Cropss a rectangular region from this bounding box. The box is a
+        Crops a rectangular region from this bounding box. The box is a
         4-tuple defining the left, upper, right, and lower pixel
         coordinate.
         """

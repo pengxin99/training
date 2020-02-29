@@ -28,4 +28,4 @@ class IterationBasedBatchSampler(BatchSampler):
                 yield batch
 
     def __len__(self):
-        return self.num_iterations
+        return self.num_iterations if self.num_iterations < len(self.batch_sampler) else len(self.batch_sampler)
