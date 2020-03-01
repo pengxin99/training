@@ -7,6 +7,7 @@ from ssd300 import SSD300
 import torch
 from torch.autograd import Variable
 from torch.utils.data import DataLoader
+from torch.utils import mkldnn as mkldnn_utils
 import time
 import random
 import numpy as np
@@ -30,12 +31,10 @@ def parse_args():
                         help='stop training early at threshold')
     parser.add_argument('--iteration', type=int, default=0,
                         help='iteration to start from')
-    parser.add_argument('--iteration-perf-test', type=int, default=0,
+    parser.add_argument('--totle-iteration', type=int, default=0,
                         help='iteration to run performance test, 0 means no limited')
     parser.add_argument('--checkpoint', type=str, default=None,
                         help='path to model checkpoint file')
-    # parser.add_argument('--param-file', type=str, default=None,
-    #                     help='path to model parameter file')
     parser.add_argument('--no-save', action='store_true',
                         help='save model checkpoints')
     parser.add_argument('--evaluation', nargs='*', type=int,
@@ -53,7 +52,7 @@ def parse_args():
                         help='how long the learning rate will be warmed up in fraction of epochs')
     parser.add_argument('--warmup-factor', type=int, default=0,
                         help='mlperf rule parameter for controlling warmup curve')
-    parser.add_argument('--perf-prerun-warmup', type=int, default=-1,
+    parser.add_argument('--perf-prerun-warmup', type=int, default=0,
                         help='how much iterations to pre run before performance test, -1 mean use all dataset.')
     parser.add_argument('--lr', type=float, default=2.5e-3,
                         help='base learning rate')
@@ -61,6 +60,8 @@ def parse_args():
     parser.add_argument('--local_rank', default=0, type=int,
                         help='Used for multi-process training. Can either be manually set ' +
                         'or automatically set by using \'python -m multiproc\'.')
+    parser.add_argument('--use-mkldnn', action='store_true',
+                        help='use mkldnn')
 
     return parser.parse_args()
 
@@ -118,7 +119,7 @@ def dboxes300_coco():
 
 
 def coco_eval(model, coco, cocoGt, encoder, inv_map, threshold,
-              epoch, iteration, use_cuda=True, for_perf_test=False, warmup=-1):
+              epoch, iteration, use_cuda=True, is_inference_test=False, warmup=0, use_mkldnn=False):
     from pycocotools.cocoeval import COCOeval
 
     batch_time = AverageMeter('Time', ':6.3f')
@@ -127,6 +128,10 @@ def coco_eval(model, coco, cocoGt, encoder, inv_map, threshold,
     model.eval()
     if use_cuda:
         model.cuda()
+    elif use_mkldnn and is_inference_test:
+        print("using mkldnn model to do inference\n")
+        model = mkldnn_utils.to_mkldnn(model)
+
     ret = []
 
     overlap_threshold = 0.50
@@ -145,11 +150,13 @@ def coco_eval(model, coco, cocoGt, encoder, inv_map, threshold,
         img, (htot, wtot), _, _ = coco[idx]
 
         with torch.no_grad():
-            # print("Parsing image: {}/{}".format(idx+1, len(coco)), end="\r")
             print("Parsing image: {}/{}".format(idx+1, len(coco)))
             inp = img.unsqueeze(0)
             if use_cuda:
                 inp = inp.cuda()
+            elif use_mkldnn:
+                inp = inp.to_mkldnn()
+
             if warmup > 0 and idx >= warmup:
                 start_time=time.time()
 
@@ -178,7 +185,7 @@ def coco_eval(model, coco, cocoGt, encoder, inv_map, threshold,
                                       prob_,
                                       inv_map[label_]])
     print("")
-    if for_perf_test:
+    if is_inference_test:
         latency = batch_time.sum / totle_num_imgs * 1000
         perf = totle_num_imgs / batch_time.sum
         print('inference latency %3.0f ms'%latency)
@@ -236,17 +243,18 @@ def eval300_mlperf_coco(args):
         print("loading model checkpoint", args.checkpoint)
         od = torch.load(args.checkpoint)
         ssd300.load_state_dict(od["model"])
-    # if args.param_file is not None:
-    #     od = torch.load(args.param_file)
-    #     ssd300.load_state_dict(od)
 
-    if use_cuda:
-        ssd300.cuda()
+    # if use_cuda:
+    #     ssd300.cuda()
+    # elif args.use_mkldnn:
+    #     logger.info("using mkldnn model to do inference\n")
+    #     ssd300 = mkldnn_utils.to_mkldnn(ssd300)
+
     loss_func = Loss(dboxes)
     if use_cuda:
         loss_func.cuda()
 
-    return coco_eval(ssd300, val_coco, cocoGt, encoder, inv_map, args.threshold, 0, 0, use_cuda=use_cuda, for_perf_test=True, warmup=args.perf_prerun_warmup)
+    return coco_eval(ssd300, val_coco, cocoGt, encoder, inv_map, args.threshold, 0, 0, use_cuda=use_cuda, is_inference_test=True, warmup=args.perf_prerun_warmup, use_mkldnn=args.use_mkldnn)
 
 
 def lr_warmup(optim, wb, iter_num, base_lr, args):
@@ -402,6 +410,8 @@ def train300_mlperf_coco(args):
         for nbatch, (img, img_size, bbox, label) in enumerate(train_dataloader):
             if use_cuda:
                 img = img.cuda()
+            elif args.use_mkldnn:
+                img = img.to_mkldnn()
             img = Variable(img, requires_grad=True)
             ploc, plabel = ssd300(img)
             trans_bbox = bbox.transpose(1,2).contiguous()
@@ -426,7 +436,7 @@ def train300_mlperf_coco(args):
                         .format(iter_num, loss.item(), avg_loss), end="\r")
 
             iter_num += 1
-            if args.iteration_perf_test > 0 and (iter_num - args.iteration) >= args.iteration_perf_test:
+            if args.totle_iteration > 0 and (iter_num - args.iteration) >= args.totle_iteration:
                 break
 
             if (iter_num - args.iteration) >= args.perf_prerun_warmup:
@@ -468,14 +478,18 @@ def train300_mlperf_coco(args):
 def main():
     args = parse_args()
 
+    if args.use_mkldnn and not args.no_cuda:
+        logger.error("Mkldnn and CUDA are mutually exclusive")
+        return
+
     if args.local_rank == 0:
         if not os.path.isdir('./models'):
             os.mkdir('./models')
 
     torch.backends.cudnn.benchmark = True
 
-    if args.iteration_perf_test > 0:
-        assert args.iteration_perf_test > args.perf_prerun_warmup
+    if args.totle_iteration > 0:
+        assert args.totle_iteration > args.perf_prerun_warmup
 
     # start timing here
     ssd_print(key=mlperf_log.RUN_START)

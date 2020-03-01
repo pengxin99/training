@@ -27,7 +27,7 @@ echo "STARTING TIMING RUN AT $start_fmt"
 
 # run benchmark
 set -x
-MODE=inference
+MODE=training
 BATCH_SIZE=32
 THRESHOLD=0.23
 PERF_PRERUN_WARMUP=5
@@ -37,12 +37,12 @@ TOTLE_ITERATIONS=${TOTLE_ITERATIONS:-10}
 
 CORES=`lscpu | grep Core | awk '{print $4}'`
 SOCKETS=`lscpu | grep Socket | awk '{print $2}'`
-if [ $MODE = training]; then
+if [ $MODE = training ]; then
     TOTAL_CORES=`expr $CORES \* $SOCKETS`
     NUM_THREADS=$TOTAL_CORES
 else
     TOTAL_CORES=$CORES
-    NUM_THREADS=4
+    NUM_THREADS=$TOTAL_CORES
 fi
 
 echo "running benchmark"
@@ -56,7 +56,7 @@ export OMP_NUM_THREADS=$NUM_THREADS  KMP_AFFINITY=proclist=[$startid-$endid],gra
 export DATASET_DIR="/lustre/dataset/COCO2017"
 # export TORCH_MODEL_ZOO="/data/torchvision"
 
-PYTHONPATH=/home/penghuic/mlperf_ph_fork/training/compliance python performance_test.py \
+python performance_test.py \
   --epochs "${NUMEPOCHS}" \
   --warmup-factor 0 \
   --lr "${LR}" \
@@ -64,11 +64,12 @@ PYTHONPATH=/home/penghuic/mlperf_ph_fork/training/compliance python performance_
   --threshold=$THRESHOLD \
   --data ${DATASET_DIR} \
   --no-cuda \
+  --use-mkldnn \
   -b $BATCH_SIZE \
-  --iteration-perf-test "${TOTLE_ITERATIONS}" \
+  --totle-iteration "${TOTLE_ITERATIONS}" \
   -m $MODE \
   --perf-prerun-warmup $PERF_PRERUN_WARMUP \
-  ${EXTRA_PARAMS[@]} &
+  ${EXTRA_PARAMS[@]}
 ret_code=$?
 done
 set +x
