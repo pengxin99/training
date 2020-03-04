@@ -1,7 +1,7 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
 from maskrcnn_benchmark.modeling import registry
 from torch import nn
-
+import os
 
 @registry.ROI_BOX_PREDICTOR.register("FastRCNNPredictor")
 class FastRCNNPredictor(nn.Module):
@@ -50,8 +50,12 @@ class FPNPredictor(nn.Module):
             nn.init.constant_(l.bias, 0)
 
     def forward(self, x):
-        scores = self.cls_score(x)
-        bbox_deltas = self.bbox_pred(x)
+        if os.environ.get('USE_MKLDNN') == "1":
+            scores = self.cls_score(x.to_mkldnn())
+            bbox_deltas = self.bbox_pred(x.to_mkldnn())
+        else:
+            scores = self.cls_score(x)
+            bbox_deltas = self.bbox_pred(x)
 
         return scores, bbox_deltas
 

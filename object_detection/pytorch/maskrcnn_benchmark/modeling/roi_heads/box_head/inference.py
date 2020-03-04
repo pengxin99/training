@@ -1,4 +1,5 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
+import os
 import torch
 import torch.nn.functional as F
 from torch import nn
@@ -53,7 +54,11 @@ class PostProcessor(nn.Module):
                 the extra fields labels and scores
         """
         class_logits, box_regression = x
-        class_prob = F.softmax(class_logits, -1)
+
+        if os.environ.get('USE_MKLDNN') == "1":
+            class_prob = F.softmax(class_logits.to_dense(), -1)
+        else:
+            class_prob = F.softmax(class_logits, -1)
 
         # TODO think about a representation of batch of boxes
         image_shapes = [box.size for box in boxes]
@@ -62,9 +67,16 @@ class PostProcessor(nn.Module):
 
         if self.cls_agnostic_bbox_reg:
             box_regression = box_regression[:, -4:]
-        proposals = self.box_coder.decode(
-            box_regression.view(sum(boxes_per_image), -1), concat_boxes
-        )
+
+        if os.environ.get('USE_MKLDNN') == "1":
+            proposals = self.box_coder.decode(
+                box_regression.to_dense().view(sum(boxes_per_image), -1), concat_boxes
+            )
+        else:
+            proposals = self.box_coder.decode(
+                box_regression.view(sum(boxes_per_image), -1), concat_boxes
+            )
+
         if self.cls_agnostic_bbox_reg:
             proposals = proposals.repeat(1, class_prob.shape[1])
 

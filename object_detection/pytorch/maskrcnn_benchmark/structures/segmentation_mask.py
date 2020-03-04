@@ -3,6 +3,8 @@ import torch
 
 import pycocotools.mask as mask_utils
 
+import os
+
 # transpose
 FLIP_LEFT_RIGHT = 0
 FLIP_TOP_BOTTOM = 1
@@ -61,6 +63,17 @@ class Polygons(object):
             polygons = [torch.as_tensor(p, dtype=torch.float32) for p in polygons]
         elif isinstance(polygons, Polygons):
             polygons = polygons.polygons
+
+        if os.environ.get('PROFILE') == "1":
+            polygons = [torch.tensor([ 87.2667, 645.8794, 167.8000, 652.0589, 206.3500, 658.2550, 207.0500,
+            753.8785, 216.6833, 760.7575, 214.6167, 837.1098, 213.2333, 869.6394, 87.2667, 853.8326]),
+            torch.tensor([242.8333, 670.6306, 298.6000, 710.5389, 301.3500, 807.5283, 291.0167,
+            815.1069, 285.5167, 841.0074, 289.6500, 845.8210, 291.7166, 900.8532,
+            282.0667, 906.3499, 262.1167, 908.4152, 244.2167, 900.1537, 237.3333,
+            896.0397, 230.4500, 889.8434, 228.3833, 886.3956, 228.3833, 858.8796,
+            228.3833, 762.5731, 233.8833, 757.7595, 236.6500, 671.0803]),
+            torch.tensor([344.0333, 720.6160, 381.2000, 726.1125, 356.4167, 816.2395, 347.4666,
+            816.9224, 350.2167, 805.2297, 346.7833, 805.2297])]
 
         self.polygons = polygons
         self.size = size

@@ -1,4 +1,5 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
+import os
 from torch import nn
 from torch.nn import functional as F
 
@@ -53,7 +54,11 @@ class MaskRCNNFPNFeatureExtractor(nn.Module):
         x = self.pooler(x, proposals)
 
         for layer_name in self.blocks:
-            x = F.relu(getattr(self, layer_name)(x))
+            if os.environ.get('USE_MKLDNN') == "1":
+                x = F.relu(getattr(self, layer_name)(x.to_mkldnn()))
+                x = x.to_dense()
+            else:
+                x = F.relu(getattr(self, layer_name)(x))
 
         return x
 

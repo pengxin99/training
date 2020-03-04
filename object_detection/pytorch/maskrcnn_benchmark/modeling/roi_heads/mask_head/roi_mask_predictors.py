@@ -1,4 +1,5 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
+import os
 from torch import nn
 from torch.nn import functional as F
 
@@ -33,7 +34,10 @@ class MaskRCNNC4Predictor(nn.Module):
 
     def forward(self, x):
         x = F.relu(self.conv5_mask(x))
-        return self.mask_fcn_logits(x)
+        if os.environ.get('USE_MKLDNN') == "1":
+            return self.mask_fcn_logits(x.to_mkldnn())
+        else:
+            return self.mask_fcn_logits(x)
 
 
 _ROI_MASK_PREDICTOR = {"MaskRCNNC4Predictor": MaskRCNNC4Predictor}

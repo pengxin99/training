@@ -13,19 +13,40 @@ from ..utils.comm import all_gather
 from ..utils.comm import synchronize
 
 
-def compute_on_dataset(model, data_loader, device):
+def compute_on_dataset(model, data_loader, device, log_path, iterations):
     model.eval()
     results_dict = {}
     cpu_device = torch.device("cpu")
-    for i, batch in enumerate(tqdm(data_loader)):
-        images, targets, image_ids = batch
-        images = images.to(device)
-        with torch.no_grad():
-            output = model(images)
-            output = [o.to(cpu_device) for o in output]
-        results_dict.update(
-            {img_id: result for img_id, result in zip(image_ids, output)}
-        )
+
+    if os.environ.get('PROFILE') == "1":
+        for i, batch in enumerate(tqdm(data_loader)):
+
+            if i > iterations-1:
+                break
+
+            with torch.autograd.profiler.profile() as prof:
+                images, targets, image_ids = batch
+                images = images.to(device)
+                with torch.no_grad():
+                    output = model(images)
+                    output = [o.to(cpu_device) for o in output]
+                results_dict.update(
+                    {img_id: result for img_id, result in zip(image_ids, output)}
+                )
+            prof.export_chrome_trace(os.path.join(log_path, 'result_' + str(i) + '.json'))
+    else:
+        for i, batch in enumerate(tqdm(data_loader)):
+            #if i > iterations-1:
+            #    break
+            images, targets, image_ids = batch
+            images = images.to(device)
+            with torch.no_grad():
+                output = model(images)
+                output = [o.to(cpu_device) for o in output]
+            results_dict.update(
+                {img_id: result for img_id, result in zip(image_ids, output)}
+            )
+
     return results_dict
 
 
@@ -61,6 +82,8 @@ def inference(
         expected_results=(),
         expected_results_sigma_tol=4,
         output_folder=None,
+        log_path='./log/',
+        iterations=6
 ):
     # convert to a torch.device for efficiency
     device = torch.device(device)
@@ -73,7 +96,7 @@ def inference(
     dataset = data_loader.dataset
     logger.info("Start evaluation on {} dataset({} images).".format(dataset_name, len(dataset)))
     start_time = time.time()
-    predictions = compute_on_dataset(model, data_loader, device)
+    predictions = compute_on_dataset(model, data_loader, device, log_path, iterations)
     # wait for all processes to complete before measuring the time
     synchronize()
     total_time = time.time() - start_time

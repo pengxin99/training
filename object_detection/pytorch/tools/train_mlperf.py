@@ -3,6 +3,9 @@ r"""
 Basic training script for PyTorch
 """
 
+import sys
+sys.path.append("../../compliance")
+
 # Set up custom environment before nearly anything else is imported
 # NOTE: this should be the first import (no not reorder)
 from maskrcnn_benchmark.utils.env import setup_environment  # noqa F401 isort:skip
@@ -33,6 +36,8 @@ from maskrcnn_benchmark.utils.miscellaneous import mkdir
 from maskrcnn_benchmark.utils.mlperf_logger import print_mlperf, generate_seeds, broadcast_seeds
 
 from mlperf_compliance import mlperf_log
+
+from torch.utils import mkldnn as mkldnn_utils
 
 def test_and_exchange_map(tester, model, distributed):
     results = tester(model=model, distributed=distributed)
@@ -104,7 +109,7 @@ def cast_frozen_bn_to_half(module):
         cast_frozen_bn_to_half(child)
     return module
 
-def train(cfg, local_rank, distributed):
+def train(cfg, local_rank, distributed, log_path, iters):
     # Model logging
     print_mlperf(key=mlperf_log.INPUT_BATCH_SIZE, value=cfg.SOLVER.IMS_PER_BATCH)
     print_mlperf(key=mlperf_log.BATCH_SIZE_TEST, value=cfg.TEST.IMS_PER_BATCH)
@@ -186,7 +191,8 @@ def train(cfg, local_rank, distributed):
         per_iter_callback_fn = None
 
     start_train_time = time.time()
-
+    if os.environ.get('USE_MKLDNN') == "1":
+        model = mkldnn_utils.to_mkldnn(model)
     do_train(
         model,
         data_loader,
@@ -196,6 +202,8 @@ def train(cfg, local_rank, distributed):
         device,
         checkpoint_period,
         arguments,
+        log_path,
+        iters,
         per_iter_start_callback_fn=functools.partial(mlperf_log_epoch_start, iters_per_epoch=iters_per_epoch),
         per_iter_end_callback_fn=per_iter_callback_fn,
     )
@@ -229,6 +237,11 @@ def main():
         nargs=argparse.REMAINDER,
     )
 
+    parser.add_argument('--log', type=str, default='./',
+                        help='folder to save profiling result')
+    parser.add_argument('--iters', type=int, default=6,
+                        help='profile iteration number')
+
     args = parser.parse_args()
 
     num_gpus = int(os.environ["WORLD_SIZE"]) if "WORLD_SIZE" in os.environ else 1
@@ -236,7 +249,7 @@ def main():
 
     if is_main_process:
         # Setting logging file parameters for compliance logging
-        os.environ["COMPLIANCE_FILE"] = '/MASKRCNN_complVv0.5.0_' + str(datetime.datetime.now())
+        os.environ["COMPLIANCE_FILE"] = './MASKRCNN_complVv0.5.0_' + str(datetime.datetime.now())
         mlperf_log.LOG_FILE = os.getenv("COMPLIANCE_FILE")
         mlperf_log._FILE_HANDLER = logging.FileHandler(mlperf_log.LOG_FILE)
         mlperf_log._FILE_HANDLER.setLevel(logging.DEBUG)
@@ -304,7 +317,7 @@ def main():
         logger.info(config_str)
     logger.info("Running with config:\n{}".format(cfg))
 
-    model = train(cfg, args.local_rank, args.distributed)
+    model = train(cfg, args.local_rank, args.distributed, args.log, args.iters)
 
     print_mlperf(key=mlperf_log.RUN_FINAL)
 

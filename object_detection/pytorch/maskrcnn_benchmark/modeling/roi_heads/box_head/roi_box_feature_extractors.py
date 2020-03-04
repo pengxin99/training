@@ -1,4 +1,5 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
+import os
 import torch
 from torch import nn
 from torch.nn import functional as F
@@ -73,8 +74,12 @@ class FPN2MLPFeatureExtractor(nn.Module):
         x = self.pooler(x, proposals)
         x = x.view(x.size(0), -1)
 
-        x = F.relu(self.fc6(x))
-        x = F.relu(self.fc7(x))
+        if os.environ.get('USE_MKLDNN') == "1":
+            x = F.relu(self.fc6(x.to_mkldnn()))
+            x = F.relu(self.fc7(x)).to_dense()
+        else:
+            x = F.relu(self.fc6(x))
+            x = F.relu(self.fc7(x))
 
         return x
 

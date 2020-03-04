@@ -3,6 +3,7 @@ import datetime
 import logging
 import time
 
+import os
 import torch
 import torch.distributed as dist
 
@@ -51,6 +52,8 @@ def do_train(
     device,
     checkpoint_period,
     arguments,
+    log_path='./log/',
+    iters=6,
     per_iter_start_callback_fn=None,
     per_iter_end_callback_fn=None,
 ):
@@ -63,72 +66,147 @@ def do_train(
     start_training_time = time.time()
     end = time.time()
 
-    for iteration, (images, targets, _) in enumerate(data_loader, start_iter):
+    if os.environ.get('PROFILE') == "1":
+        for iteration, (images, targets, _) in enumerate(data_loader, start_iter):
 
-        if per_iter_start_callback_fn is not None:
-            per_iter_start_callback_fn(iteration=iteration)
+            if iteration > iters-1:
+                break 
 
-        data_time = time.time() - end
-        iteration = iteration + 1
-        arguments["iteration"] = iteration
+            with torch.autograd.profiler.profile() as prof:
 
-        scheduler.step()
+                if per_iter_start_callback_fn is not None:
+                    per_iter_start_callback_fn(iteration=iteration)
+   
+                data_time = time.time() - end
+                iteration = iteration + 1
+                arguments["iteration"] = iteration
+    
+                scheduler.step()
 
-        images = images.to(device)
-        targets = [target.to(device) for target in targets]
+                images = images.to(device)
+                targets = [target.to(device) for target in targets]
 
-        loss_dict = model(images, targets)
+                loss_dict = model(images, targets)
+                losses = sum(loss for loss in loss_dict.values())
+    
+                # reduce losses over all GPUs for logging purposes
+                loss_dict_reduced = reduce_loss_dict(loss_dict)
+                losses_reduced = sum(loss for loss in loss_dict_reduced.values())
+                meters.update(loss=losses_reduced, **loss_dict_reduced)
+                losses.backward()
+    
+                optimizer.step()
+                optimizer.zero_grad()
 
-        losses = sum(loss for loss in loss_dict.values())
+                batch_time = time.time() - end
+                end = time.time()
+                meters.update(time=batch_time, data=data_time)
+    
+                eta_seconds = meters.time.global_avg * (max_iter - iteration)
+                eta_string = str(datetime.timedelta(seconds=int(eta_seconds)))
+    
+                if iteration % 20 == 0 or iteration == max_iter:
+                    logger.info(
+                        meters.delimiter.join(
+                            [
+                                "eta: {eta}",
+                                "iter: {iter}",
+                                "{meters}",
+                                "lr: {lr:.6f}",
+                                #"max mem: {memory:.0f}",
+                            ]
+                        ).format(
+                            eta=eta_string,
+                            iter=iteration,
+                            meters=str(meters),
+                            lr=optimizer.param_groups[0]["lr"],
+                            #memory=torch.cuda.max_memory_allocated() / 1024.0 / 1024.0,
+                        )
+                    )
+                if iteration % checkpoint_period == 0 and arguments["save_checkpoints"]:
+                    checkpointer.save("model_{:07d}".format(iteration), **arguments)
+                if iteration == max_iter and arguments["save_checkpoints"]:
+                    checkpointer.save("model_final", **arguments)
 
-        # reduce losses over all GPUs for logging purposes
-        loss_dict_reduced = reduce_loss_dict(loss_dict)
-        losses_reduced = sum(loss for loss in loss_dict_reduced.values())
-        meters.update(loss=losses_reduced, **loss_dict_reduced)
+                # per-epoch work (testing)
+                if per_iter_end_callback_fn is not None:
+                    # Note: iteration has been incremented previously for
+                    # human-readable checkpoint names (i.e. 60000 instead of 59999)
+                    # so need to adjust again here
+                    early_exit = per_iter_end_callback_fn(iteration=iteration-1)
+                    if early_exit:
+                            break
+            prof.export_chrome_trace(os.path.join(log_path, 'result_' + str(iteration) + '.json'))
+    else:
+        for iteration, (images, targets, _) in enumerate(data_loader, start_iter):
 
-        losses.backward()
+            #if iteration > iters-1:
+            #    break
 
-        optimizer.step()
-        optimizer.zero_grad()
+            if per_iter_start_callback_fn is not None:
+                per_iter_start_callback_fn(iteration=iteration)
 
-        batch_time = time.time() - end
-        end = time.time()
-        meters.update(time=batch_time, data=data_time)
+            data_time = time.time() - end
+            iteration = iteration + 1
+            arguments["iteration"] = iteration
 
-        eta_seconds = meters.time.global_avg * (max_iter - iteration)
-        eta_string = str(datetime.timedelta(seconds=int(eta_seconds)))
+            scheduler.step()
 
-        if iteration % 20 == 0 or iteration == max_iter:
-            logger.info(
-                meters.delimiter.join(
-                    [
-                        "eta: {eta}",
-                        "iter: {iter}",
-                        "{meters}",
-                        "lr: {lr:.6f}",
-                        "max mem: {memory:.0f}",
-                    ]
-                ).format(
-                    eta=eta_string,
-                    iter=iteration,
-                    meters=str(meters),
-                    lr=optimizer.param_groups[0]["lr"],
-                    memory=torch.cuda.max_memory_allocated() / 1024.0 / 1024.0,
+            images = images.to(device)
+            targets = [target.to(device) for target in targets]
+
+            loss_dict = model(images, targets)
+
+            losses = sum(loss for loss in loss_dict.values())
+
+            # reduce losses over all GPUs for logging purposes
+            loss_dict_reduced = reduce_loss_dict(loss_dict)
+            losses_reduced = sum(loss for loss in loss_dict_reduced.values())
+            meters.update(loss=losses_reduced, **loss_dict_reduced)
+
+            losses.backward()
+
+            optimizer.step()
+            optimizer.zero_grad()
+
+            batch_time = time.time() - end
+            end = time.time()
+            meters.update(time=batch_time, data=data_time)
+
+            eta_seconds = meters.time.global_avg * (max_iter - iteration)
+            eta_string = str(datetime.timedelta(seconds=int(eta_seconds)))
+
+            if iteration % 20 == 0 or iteration == max_iter:
+                logger.info(
+                    meters.delimiter.join(
+                        [
+                            "eta: {eta}",
+                            "iter: {iter}",
+                            "{meters}",
+                            "lr: {lr:.6f}",
+                            #"max mem: {memory:.0f}",
+                        ]
+                    ).format(
+                        eta=eta_string,
+                        iter=iteration,
+                        meters=str(meters),
+                        lr=optimizer.param_groups[0]["lr"],
+                        #memory=torch.cuda.max_memory_allocated() / 1024.0 / 1024.0,
+                    )
                 )
-            )
-        if iteration % checkpoint_period == 0 and arguments["save_checkpoints"]:
-            checkpointer.save("model_{:07d}".format(iteration), **arguments)
-        if iteration == max_iter and arguments["save_checkpoints"]:
-            checkpointer.save("model_final", **arguments)
+            if iteration % checkpoint_period == 0 and arguments["save_checkpoints"]:
+                checkpointer.save("model_{:07d}".format(iteration), **arguments)
+            if iteration == max_iter and arguments["save_checkpoints"]:
+                checkpointer.save("model_final", **arguments)
 
-        # per-epoch work (testing)
-        if per_iter_end_callback_fn is not None:
-            # Note: iteration has been incremented previously for
-            # human-readable checkpoint names (i.e. 60000 instead of 59999)
-            # so need to adjust again here
-            early_exit = per_iter_end_callback_fn(iteration=iteration-1)
-            if early_exit:
-                break
+            # per-epoch work (testing)
+            if per_iter_end_callback_fn is not None:
+                # Note: iteration has been incremented previously for
+                # human-readable checkpoint names (i.e. 60000 instead of 59999)
+                # so need to adjust again here
+                early_exit = per_iter_end_callback_fn(iteration=iteration-1)
+                if early_exit:
+                    break
 
     total_training_time = time.time() - start_training_time
     total_time_str = str(datetime.timedelta(seconds=total_training_time))

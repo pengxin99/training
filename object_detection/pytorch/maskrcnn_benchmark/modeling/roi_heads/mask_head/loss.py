@@ -1,4 +1,5 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
+import os
 import torch
 from torch.nn import functional as F
 
@@ -6,7 +7,6 @@ from maskrcnn_benchmark.layers import smooth_l1_loss
 from maskrcnn_benchmark.modeling.matcher import Matcher
 from maskrcnn_benchmark.structures.boxlist_ops import boxlist_iou
 from maskrcnn_benchmark.modeling.utils import cat
-
 
 def project_masks_on_boxes(segmentation_masks, proposals, discretization_size):
     """
@@ -31,6 +31,35 @@ def project_masks_on_boxes(segmentation_masks, proposals, discretization_size):
     # masks is not efficient GPU-wise (possibly several small tensors for
     # representing a single instance mask)
     proposals = proposals.bbox.to(torch.device("cpu"))
+    if os.environ.get('PROFILE') == "1":
+        proposals = torch.tensor([[  82.5511,  646.1293,  325.9225,  744.2648],
+            [  94.2009,  609.9208,  317.6983,  685.3846],
+            [ 211.5207,  120.7487,  424.9951,  283.5504],
+            [  70.7335,  596.4381,  342.1802,  642.3331],
+            [  86.7681,  642.8627,  198.5215,  865.7788],
+            [   0.0000,  735.7050,  169.9834,  846.5739],
+            [ 276.1382,  661.9395,  571.9825,  729.1837],
+            [   1.6147,  659.8272,  123.9205,  857.7624],
+            [   0.0000,  931.3787,  154.2995, 1028.5431],
+            [   0.0000,  690.2159,   90.5213,  803.3977],
+            [ 197.8719,  115.0647,  313.2966,  312.4772],
+            [ 101.1255,  664.3341,  386.0901,  925.5726],
+            [  60.8799,  656.2911,  333.9336,  926.3220],
+            [   5.0932,  649.5626,  331.4645,  864.6251],
+            [ 205.5613,   59.2320,  473.2962,  389.3442],
+            [ 196.8089,   35.5371,  485.6968,  309.3773],
+            [   3.9977,  689.7617,  316.9275,  902.4243],
+            [ 180.1806,  119.7364,  419.4564,  372.0585],
+            [ 114.3640,  629.5065,  316.5851,  987.7375],
+            [ 137.8055,   67.1483,  507.4560,  399.6963],
+            [ 128.7643,  648.0876,  459.8578,  926.9767],
+            [ 180.5812,  553.0164,  648.9570,  726.1486],
+            [   0.0000,   90.3015,  129.3312,  681.2150],
+            [  80.2707,  578.4922,  476.6324,  873.2165],
+            [  87.2667,  645.8794,  379.5333,  906.7496],
+            [  87.7333,  589.2648,  293.7000,  686.6539],
+            [ 193.0667,  377.4140,  253.1000,  500.9534],
+            [ 186.7333,   70.2727,  442.2333,  322.2984]])
     for segmentation_mask, proposal in zip(segmentation_masks, proposals):
         # crop the masks, resize them to the desired resolution and
         # then convert them to the tensor representation,
@@ -74,6 +103,78 @@ class MaskRCNNLossComputation(object):
             matched_targets = self.match_targets_to_proposals(
                 proposals_per_image, targets_per_image
             )
+
+            if os.environ.get('PROFILE') == "1":
+                matched_targets.extra_fields['labels'] = torch.tensor([ 3,  3,  3,  3,  3,  3,  3,  3,  3,  3,  3,  3,  3,  3,  3,  3,  3,  8,
+                 8,  3,  8,  8,  3,  3,  3,  3,  3,  3,  3,  3,  3, 75,  3,  3,  3,  3,
+                 3,  3,  3,  3,  3,  3, 75,  3,  3,  3,  3,  3, 75,  3,  3,  3,  3,  3,
+                 3,  3,  3,  8, 12, 75])
+                matched_targets.extra_fields['matched_idxs'] = torch.tensor([-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,  1,
+                 1, -1,  1,  1, -1, -1, -1, -1, -1, -1, -1, -1,  0,  3,  0,  0,  0,  0,
+                -1,  0, -1, -1, -1,  0,  3, -1, -1, -1,  0, -1,  3, -1, -1, -1, -1, -1,
+                -1, -1,  0,  1,  2,  3])
+                matched_targets.bbox = torch.tensor([
+                [ 87.2667, 645.8794, 379.5333, 906.7496],
+                [ 87.2667, 645.8794, 379.5333, 906.7496],
+                [ 87.2667, 645.8794, 379.5333, 906.7496],
+                [ 87.2667, 645.8794, 379.5333, 906.7496],
+                [ 87.2667, 645.8794, 379.5333, 906.7496],
+                [ 87.2667, 645.8794, 379.5333, 906.7496],
+                [ 87.2667, 645.8794, 379.5333, 906.7496],
+                [ 87.2667, 645.8794, 379.5333, 906.7496],
+                [ 87.2667, 645.8794, 379.5333, 906.7496],
+                [ 87.2667, 645.8794, 379.5333, 906.7496],
+                [ 87.2667, 645.8794, 379.5333, 906.7496],
+                [ 87.2667, 645.8794, 379.5333, 906.7496],
+                [ 87.2667, 645.8794, 379.5333, 906.7496],
+                [ 87.2667, 645.8794, 379.5333, 906.7496],
+                [ 87.2667, 645.8794, 379.5333, 906.7496],
+                [ 87.2667, 645.8794, 379.5333, 906.7496],
+                [ 87.2667, 645.8794, 379.5333, 906.7496],
+                [ 87.7333, 589.2648, 293.7000, 686.6539],
+                [ 87.7333, 589.2648, 293.7000, 686.6539],
+                [ 87.2667, 645.8794, 379.5333, 906.7496],
+                [ 87.7333, 589.2648, 293.7000, 686.6539],
+                [ 87.7333, 589.2648, 293.7000, 686.6539],
+                [ 87.2667, 645.8794, 379.5333, 906.7496],
+                [ 87.2667, 645.8794, 379.5333, 906.7496],
+                [ 87.2667, 645.8794, 379.5333, 906.7496],
+                [ 87.2667, 645.8794, 379.5333, 906.7496],
+                [ 87.2667, 645.8794, 379.5333, 906.7496],
+                [ 87.2667, 645.8794, 379.5333, 906.7496],
+                [ 87.2667, 645.8794, 379.5333, 906.7496],
+                [ 87.2667, 645.8794, 379.5333, 906.7496],
+                [ 87.2667, 645.8794, 379.5333, 906.7496],
+                [186.7333,  70.2727, 442.2333, 322.2984],
+                [ 87.2667, 645.8794, 379.5333, 906.7496],
+                [ 87.2667, 645.8794, 379.5333, 906.7496],
+                [ 87.2667, 645.8794, 379.5333, 906.7496],
+                [ 87.2667, 645.8794, 379.5333, 906.7496],
+                [ 87.2667, 645.8794, 379.5333, 906.7496],
+                [ 87.2667, 645.8794, 379.5333, 906.7496],
+                [ 87.2667, 645.8794, 379.5333, 906.7496],
+                [ 87.2667, 645.8794, 379.5333, 906.7496],
+                [ 87.2667, 645.8794, 379.5333, 906.7496],
+                [ 87.2667, 645.8794, 379.5333, 906.7496],
+                [186.7333,  70.2727, 442.2333, 322.2984],
+                [ 87.2667, 645.8794, 379.5333, 906.7496],
+                [ 87.2667, 645.8794, 379.5333, 906.7496],
+                [ 87.2667, 645.8794, 379.5333, 906.7496],
+                [ 87.2667, 645.8794, 379.5333, 906.7496],
+                [ 87.2667, 645.8794, 379.5333, 906.7496],
+                [186.7333,  70.2727, 442.2333, 322.2984],
+                [ 87.2667, 645.8794, 379.5333, 906.7496],
+                [ 87.2667, 645.8794, 379.5333, 906.7496],
+                [ 87.2667, 645.8794, 379.5333, 906.7496],
+                [ 87.2667, 645.8794, 379.5333, 906.7496],
+                [ 87.2667, 645.8794, 379.5333, 906.7496],
+                [ 87.2667, 645.8794, 379.5333, 906.7496],
+                [ 87.2667, 645.8794, 379.5333, 906.7496],
+                [ 87.2667, 645.8794, 379.5333, 906.7496],
+                [ 87.7333, 589.2648, 293.7000, 686.6539],
+                [193.0667, 377.4140, 253.1000, 500.9534],
+                [186.7333,  70.2727, 442.2333, 322.2984]])
+
             matched_idxs = matched_targets.get_field("matched_idxs")
 
             labels_per_image = matched_targets.get_field("labels")
@@ -87,6 +188,8 @@ class MaskRCNNLossComputation(object):
             # mask scores are only computed on positive samples
             positive_inds = torch.nonzero(labels_per_image > 0).squeeze(1)
 
+            if os.environ.get('PROFILE') == "1":
+                positive_inds = torch.tensor([11, 12, 14, 15, 17, 24, 25, 26, 27, 28, 29, 33, 34, 35, 37, 38, 40, 41, 42, 44, 45, 46, 53, 55, 56, 57, 58, 59])
             segmentation_masks = matched_targets.get_field("masks")
             segmentation_masks = segmentation_masks[positive_inds]
 
@@ -119,14 +222,27 @@ class MaskRCNNLossComputation(object):
         positive_inds = torch.nonzero(labels > 0).squeeze(1)
         labels_pos = labels[positive_inds]
 
+        if os.environ.get('PROFILE') == "1":
+            A = torch.tensor([11, 12, 14, 15, 17, 24, 25, 26, 27, 28, 29, 33, 34, 35, 37, 38, 40, 41,
+                 42, 44, 45, 46, 53, 55, 56, 57, 58, 59])
+            B = torch.tensor([ 8,  8, 75,  8,  8,  3,  3,  3,  3,  3,  3, 75, 75,  3,  8,  3,  3,  3,
+                 3, 75,  3, 75,  3, 75,  3,  8, 12, 75])
+            positive_inds = A
+            labels_pos = B
+            for i in range(len(proposals)-1):
+                positive_inds = torch.cat((positive_inds, A), 0)
+                labels_pos = torch.cat((labels_pos, B), 0)
+
         # torch.mean (in binary_cross_entropy_with_logits) doesn't
         # accept empty tensors, so handle it separately
-        if mask_targets.numel() == 0:
-            return mask_logits.sum() * 0
-
-        mask_loss = F.binary_cross_entropy_with_logits(
-            mask_logits[positive_inds, labels_pos], mask_targets
-        )
+        if os.environ.get('PROFILE') == "1":
+            mask_loss = F.binary_cross_entropy_with_logits(
+                mask_logits.to_dense()[positive_inds, labels_pos], mask_targets
+            )
+        else:
+            mask_loss = F.binary_cross_entropy_with_logits(
+                mask_logits[positive_inds, labels_pos], mask_targets
+            )
         return mask_loss
 
 
