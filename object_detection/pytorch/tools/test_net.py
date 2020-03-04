@@ -17,12 +17,6 @@ from maskrcnn_benchmark.utils.comm import synchronize, get_rank
 from maskrcnn_benchmark.utils.logger import setup_logger
 from maskrcnn_benchmark.utils.miscellaneous import mkdir
 
-# Check if we can enable mixed-precision via apex.amp
-try:
-    from apex import amp
-except ImportError:
-    raise ImportError('Use APEX for mixed precision via apex.amp')
-
 
 def main():
     parser = argparse.ArgumentParser(description="PyTorch Object Detection Inference")
@@ -34,20 +28,11 @@ def main():
     )
     parser.add_argument("--local_rank", type=int, default=0)
     parser.add_argument(
-        "--ckpt",
-        help="The path to the checkpoint for test, default is the latest checkpoint.",
-        default=None,
-    )
-    parser.add_argument(
         "opts",
         help="Modify config options using the command-line",
         default=None,
         nargs=argparse.REMAINDER,
     )
-    parser.add_argument('--use-mkldnn', action='store_true',
-                        help='use mkldnn')
-    parser.add_argument('--warmup', type=int, default=0,
-                        help='how much iterations to pre run before performance test, 0 mean use all dataset.')
 
     args = parser.parse_args()
 
@@ -63,12 +48,7 @@ def main():
 
     cfg.merge_from_file(args.config_file)
     cfg.merge_from_list(args.opts)
-    cfg.SOLVER.MAX_ITER += args.warmup
     cfg.freeze()
-
-    if args.use_mkldnn and cfg.MODEL.DEVICE == "cuda":
-        logger.error("Mkldnn and CUDA are mutually exclusive")
-        return
 
     save_dir = ""
     logger = setup_logger("maskrcnn_benchmark", save_dir, get_rank())
@@ -81,14 +61,9 @@ def main():
     model = build_detection_model(cfg)
     model.to(cfg.MODEL.DEVICE)
 
-    # Initialize mixed-precision if necessary
-    use_mixed_precision = cfg.DTYPE == 'float16'
-    amp_handle = amp.init(enabled=use_mixed_precision, verbose=cfg.AMP_VERBOSE)
-
     output_dir = cfg.OUTPUT_DIR
     checkpointer = DetectronCheckpointer(cfg, model, save_dir=output_dir)
-    ckpt = cfg.MODEL.WEIGHT if args.ckpt is None else args.ckpt
-    _ = checkpointer.load(ckpt, use_latest=args.ckpt is None)
+    _ = checkpointer.load(cfg.MODEL.WEIGHT)
 
     iou_types = ("bbox",)
     if cfg.MODEL.MASK_ON:
@@ -110,13 +85,10 @@ def main():
             dataset_name=dataset_name,
             iou_types=iou_types,
             box_only=False if cfg.MODEL.RETINANET_ON else cfg.MODEL.RPN_ONLY,
-            bbox_aug=cfg.TEST.BBOX_AUG.ENABLED,
             device=cfg.MODEL.DEVICE,
             expected_results=cfg.TEST.EXPECTED_RESULTS,
             expected_results_sigma_tol=cfg.TEST.EXPECTED_RESULTS_SIGMA_TOL,
             output_folder=output_folder,
-            warmup=args.warmup,
-            use_mkldnn=args.use_mkldnn
         )
         synchronize()
 

@@ -57,7 +57,6 @@ class PascalVOCDataset(torch.utils.data.Dataset):
 
         cls = PascalVOCDataset.CLASSES
         self.class_to_ind = dict(zip(cls, range(len(cls))))
-        self.categories = dict(zip(range(len(cls)), cls))
 
     def __getitem__(self, index):
         img_id = self.ids[index]
@@ -90,7 +89,7 @@ class PascalVOCDataset(torch.utils.data.Dataset):
         gt_classes = []
         difficult_boxes = []
         TO_REMOVE = 1
-
+        
         for obj in target.iter("object"):
             difficult = int(obj.find("difficult").text) == 1
             if not self.keep_difficult and difficult:
@@ -100,9 +99,9 @@ class PascalVOCDataset(torch.utils.data.Dataset):
             # Make pixel indexes 0-based
             # Refer to "https://github.com/rbgirshick/py-faster-rcnn/blob/master/lib/datasets/pascal_voc.py#L208-L211"
             box = [
-                bb.find("xmin").text,
-                bb.find("ymin").text,
-                bb.find("xmax").text,
+                bb.find("xmin").text, 
+                bb.find("ymin").text, 
+                bb.find("xmax").text, 
                 bb.find("ymax").text,
             ]
             bndbox = tuple(

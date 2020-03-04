@@ -2,7 +2,7 @@
 import numpy as np
 import torch
 from torch import nn
-from maskrcnn_benchmark.layers.misc import interpolate
+import torch.nn.functional as F
 
 from maskrcnn_benchmark.structures.bounding_box import BoxList
 
@@ -29,7 +29,7 @@ class MaskPostProcessor(nn.Module):
         Arguments:
             x (Tensor): the mask logits
             boxes (list[BoxList]): bounding boxes that are used as
-                reference, one for each image
+                reference, one for ech image
 
         Returns:
             results (list[BoxList]): one BoxList for each image, containing
@@ -111,16 +111,11 @@ def expand_masks(mask, padding):
     pad2 = 2 * padding
     scale = float(M + pad2) / M
     padded_mask = mask.new_zeros((N, 1, M + pad2, M + pad2))
-
     padded_mask[:, :, padding:-padding, padding:-padding] = mask
     return padded_mask, scale
 
 
 def paste_mask_in_image(mask, box, im_h, im_w, thresh=0.5, padding=1):
-    # Need to work on the CPU, where fp16 isn't supported - cast to float to avoid this
-    mask = mask.float()
-    box = box.float()
-
     padded_mask, scale = expand_masks(mask[None], padding=padding)
     mask = padded_mask[0, 0]
     box = expand_boxes(box[None], scale)[0]
@@ -137,7 +132,7 @@ def paste_mask_in_image(mask, box, im_h, im_w, thresh=0.5, padding=1):
 
     # Resize mask
     mask = mask.to(torch.float32)
-    mask = interpolate(mask, size=(h, w), mode='bilinear', align_corners=False)
+    mask = F.interpolate(mask, size=(h, w), mode='bilinear', align_corners=False)
     mask = mask[0][0]
 
     if thresh >= 0:
@@ -145,9 +140,9 @@ def paste_mask_in_image(mask, box, im_h, im_w, thresh=0.5, padding=1):
     else:
         # for visualization and debugging, we also
         # allow it to return an unmodified mask
-        mask = (mask * 255).to(torch.bool)
+        mask = (mask * 255).to(torch.uint8)
 
-    im_mask = torch.zeros((im_h, im_w), dtype=torch.bool)
+    im_mask = torch.zeros((im_h, im_w), dtype=torch.uint8)
     x_0 = max(box[0], 0)
     x_1 = min(box[2] + 1, im_w)
     y_0 = max(box[1], 0)

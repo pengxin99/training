@@ -22,13 +22,14 @@ from maskrcnn_benchmark.solver import make_lr_scheduler
 from maskrcnn_benchmark.solver import make_optimizer
 from maskrcnn_benchmark.engine.inference import inference
 from maskrcnn_benchmark.engine.trainer import do_train
+from maskrcnn_benchmark.engine.tester import test
 from maskrcnn_benchmark.modeling.detector import build_detection_model
 from maskrcnn_benchmark.utils.checkpoint import DetectronCheckpointer
 from maskrcnn_benchmark.utils.collect_env import collect_env_info
 from maskrcnn_benchmark.utils.comm import synchronize, get_rank, is_main_process
 from maskrcnn_benchmark.utils.imports import import_file
 from maskrcnn_benchmark.utils.logger import setup_logger
-from maskrcnn_benchmark.utils.miscellaneous import mkdir, save_config
+from maskrcnn_benchmark.utils.miscellaneous import mkdir
 from maskrcnn_benchmark.utils.mlperf_logger import print_mlperf, generate_seeds, broadcast_seeds
 
 from mlperf_compliance import mlperf_log
@@ -103,7 +104,7 @@ def cast_frozen_bn_to_half(module):
         cast_frozen_bn_to_half(child)
     return module
 
-def train(cfg, local_rank, distributed, use_mkldnn=False, warmup=0):
+def train(cfg, local_rank, distributed):
     # Model logging
     print_mlperf(key=mlperf_log.INPUT_BATCH_SIZE, value=cfg.SOLVER.IMS_PER_BATCH)
     print_mlperf(key=mlperf_log.BATCH_SIZE_TEST, value=cfg.TEST.IMS_PER_BATCH)
@@ -156,58 +157,47 @@ def train(cfg, local_rank, distributed, use_mkldnn=False, warmup=0):
     checkpointer = DetectronCheckpointer(
         cfg, model, optimizer, scheduler, output_dir, save_to_disk
     )
-    # arguments["save_checkpoints"] = cfg.SAVE_CHECKPOINTS
+    arguments["save_checkpoints"] = cfg.SAVE_CHECKPOINTS
 
     extra_checkpoint_data = checkpointer.load(cfg.MODEL.WEIGHT)
     arguments.update(extra_checkpoint_data)
 
-    data_loader = make_data_loader(
+    data_loader, iters_per_epoch = make_data_loader(
         cfg,
         is_train=True,
         is_distributed=distributed,
         start_iter=arguments["iteration"],
     )
 
-    test_period = cfg.SOLVER.TEST_PERIOD
-    if test_period > 0:
-        data_loader_val = make_data_loader(cfg, is_train=False, is_distributed=distributed, is_for_period=True)
-    else:
-        data_loader_val = None
-
     checkpoint_period = cfg.SOLVER.CHECKPOINT_PERIOD
 
-    # # set the callback function to evaluate and potentially
-    # # early exit each epoch
-    # if cfg.PER_EPOCH_EVAL:
-    #     per_iter_callback_fn = functools.partial(
-    #             mlperf_test_early_exit,
-    #             iters_per_epoch=iters_per_epoch,
-    #             tester=functools.partial(test, cfg=cfg),
-    #             model=model,
-    #             distributed=distributed,
-    #             min_bbox_map=cfg.MLPERF.MIN_BBOX_MAP,
-    #             min_segm_map=cfg.MLPERF.MIN_SEGM_MAP)
-    # else:
-    #     per_iter_callback_fn = None
+    # set the callback function to evaluate and potentially
+    # early exit each epoch
+    if cfg.PER_EPOCH_EVAL:
+        per_iter_callback_fn = functools.partial(
+                mlperf_test_early_exit,
+                iters_per_epoch=iters_per_epoch,
+                tester=functools.partial(test, cfg=cfg),
+                model=model,
+                distributed=distributed,
+                min_bbox_map=cfg.MLPERF.MIN_BBOX_MAP,
+                min_segm_map=cfg.MLPERF.MIN_SEGM_MAP)
+    else:
+        per_iter_callback_fn = None
 
     start_train_time = time.time()
 
     do_train(
-        cfg,
         model,
         data_loader,
-        data_loader_val,
         optimizer,
         scheduler,
         checkpointer,
         device,
         checkpoint_period,
-        test_period,
         arguments,
-        use_mkldnn,
-        warmup
-        # per_iter_start_callback_fn=functools.partial(mlperf_log_epoch_start, iters_per_epoch=iters_per_epoch),
-        # per_iter_end_callback_fn=per_iter_callback_fn,
+        per_iter_start_callback_fn=functools.partial(mlperf_log_epoch_start, iters_per_epoch=iters_per_epoch),
+        per_iter_end_callback_fn=per_iter_callback_fn,
     )
 
     end_train_time = time.time()
@@ -238,10 +228,6 @@ def main():
         default=None,
         nargs=argparse.REMAINDER,
     )
-    parser.add_argument('--use-mkldnn', action='store_true',
-                        help='use mkldnn')
-    parser.add_argument('--warmup', type=int, default=0,
-                        help='how much iterations to pre run before performance test, 0 mean use all dataset.')
 
     args = parser.parse_args()
 
@@ -250,7 +236,7 @@ def main():
 
     if is_main_process:
         # Setting logging file parameters for compliance logging
-        os.environ["COMPLIANCE_FILE"] = './MASKRCNN_complVv0.5.0_' + str(datetime.datetime.now())
+        os.environ["COMPLIANCE_FILE"] = '/MASKRCNN_complVv0.5.0_' + str(datetime.datetime.now())
         mlperf_log.LOG_FILE = os.getenv("COMPLIANCE_FILE")
         mlperf_log._FILE_HANDLER = logging.FileHandler(mlperf_log.LOG_FILE)
         mlperf_log._FILE_HANDLER.setLevel(logging.DEBUG)
@@ -287,12 +273,7 @@ def main():
 
     cfg.merge_from_file(args.config_file)
     cfg.merge_from_list(args.opts)
-    cfg.SOLVER.MAX_ITER += args.warmup
     cfg.freeze()
-
-    if args.use_mkldnn and cfg.MODEL.DEVICE == "cuda":
-        logger.error("Mkldnn and CUDA are mutually exclusive")
-        return
 
     output_dir = cfg.OUTPUT_DIR
     if output_dir:
@@ -323,7 +304,7 @@ def main():
         logger.info(config_str)
     logger.info("Running with config:\n{}".format(cfg))
 
-    model = train(cfg, args.local_rank, args.distributed, args.use_mkldnn, args.warmup)
+    model = train(cfg, args.local_rank, args.distributed)
 
     print_mlperf(key=mlperf_log.RUN_FINAL)
 

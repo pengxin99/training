@@ -31,6 +31,9 @@ import sys
 
 import cityscapesscripts.evaluation.instances2dict_with_polygons as cs
 
+import detectron.utils.segms as segms_util
+import detectron.utils.boxes as bboxs_util
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Convert dataset')
@@ -45,23 +48,6 @@ def parse_args():
         parser.print_help()
         sys.exit(1)
     return parser.parse_args()
-
-
-def poly_to_box(poly):
-    """Convert a polygon into a tight bounding box."""
-    x0 = min(min(p[::2]) for p in poly)
-    x1 = max(max(p[::2]) for p in poly)
-    y0 = min(min(p[1::2]) for p in poly)
-    y1 = max(max(p[1::2]) for p in poly)
-    box_from_poly = [x0, y0, x1, y1]
-
-    return box_from_poly
-
-def xyxy_to_xywh(xyxy_box):
-    xmin, ymin, xmax, ymax = xyxy_box
-    TO_REMOVE = 1
-    xywh_box = (xmin, ymin, xmax - xmin + TO_REMOVE, ymax - ymin + TO_REMOVE)
-    return xywh_box
 
 
 def convert_coco_stuff_mat(data_dir, out_dir):
@@ -157,7 +143,6 @@ def convert_cityscapes_instance_only(
         images = []
         annotations = []
         ann_dir = os.path.join(data_dir, ann_dir)
-
         for root, _, files in os.walk(ann_dir):
             for filename in files:
                 if filename.endswith(ends_in % data_set.split('_')[0]):
@@ -208,10 +193,9 @@ def convert_cityscapes_instance_only(
                             ann['category_id'] = category_dict[object_cls]
                             ann['iscrowd'] = 0
                             ann['area'] = obj['pixelCount']
-                            
-                            xyxy_box = poly_to_box(ann['segmentation'])
-                            xywh_box = xyxy_to_xywh(xyxy_box)
-                            ann['bbox'] = xywh_box
+                            ann['bbox'] = bboxs_util.xyxy_to_xywh(
+                                segms_util.polys_to_boxes(
+                                    [ann['segmentation']])).tolist()[0]
 
                             annotations.append(ann)
 

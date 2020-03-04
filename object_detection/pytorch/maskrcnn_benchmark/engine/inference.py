@@ -1,40 +1,27 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
+import datetime
 import logging
 import time
 import os
 
 import torch
-from torch.utils import mkldnn as mkldnn_utils
 from tqdm import tqdm
 
 from maskrcnn_benchmark.data.datasets.evaluation import evaluate
-from ..utils.comm import is_main_process, get_world_size
+from ..utils.comm import is_main_process
 from ..utils.comm import all_gather
 from ..utils.comm import synchronize
-from ..utils.timer import Timer, get_time_str
-from .bbox_aug import im_detect_bbox_aug
 
 
-def compute_on_dataset(model, data_loader, device, bbox_aug, timer=None, use_mkldnn=False):
+def compute_on_dataset(model, data_loader, device):
     model.eval()
     results_dict = {}
     cpu_device = torch.device("cpu")
-    for _, batch in enumerate(tqdm(data_loader)):
+    for i, batch in enumerate(tqdm(data_loader)):
         images, targets, image_ids = batch
+        images = images.to(device)
         with torch.no_grad():
-            if timer:
-                timer.tic()
-            if bbox_aug:
-                output = im_detect_bbox_aug(model, images, device, use_mkldnn)
-            else:
-                if use_mkldnn:
-                    output = model(images.to_mkldnn())
-                else:
-                    output = model(images.to(device))
-            if timer:
-                if not device.type == 'cpu':
-                    torch.cuda.synchronize()
-                timer.toc()
+            output = model(images)
             output = [o.to(cpu_device) for o in output]
         results_dict.update(
             {img_id: result for img_id, result in zip(image_ids, output)}
@@ -70,61 +57,30 @@ def inference(
         dataset_name,
         iou_types=("bbox",),
         box_only=False,
-        bbox_aug=False,
         device="cuda",
         expected_results=(),
         expected_results_sigma_tol=4,
         output_folder=None,
-        warmup=0,
-        use_mkldnn=False
 ):
     # convert to a torch.device for efficiency
     device = torch.device(device)
-    num_devices = get_world_size()
+    num_devices = (
+        torch.distributed.get_world_size()
+        if torch.distributed.is_initialized()
+        else 1
+    )
     logger = logging.getLogger("maskrcnn_benchmark.inference")
-    if use_mkldnn:
-        logger.info("using mkldnn model to do inference\n")
-        model = mkldnn_utils.to_mkldnn(model)
     dataset = data_loader.dataset
     logger.info("Start evaluation on {} dataset({} images).".format(dataset_name, len(dataset)))
-    total_timer = Timer()
-    inference_timer = Timer(warmup)
-    total_timer.tic()
-    predictions = compute_on_dataset(model, data_loader, device, bbox_aug, inference_timer, use_mkldnn)
+    start_time = time.time()
+    predictions = compute_on_dataset(model, data_loader, device)
     # wait for all processes to complete before measuring the time
     synchronize()
-    total_time = total_timer.toc()
-    total_time_str = get_time_str(total_time)
-    imgs_per_device = data_loader.batch_sampler.batch_sampler.batch_size
-    # logger.info(
-    #     "Total run time: {} ({} s / img per device, on {} devices)".format(
-    #         total_time_str, total_time * num_devices / len(dataset), num_devices
-    #     )
-    # )
+    total_time = time.time() - start_time
+    total_time_str = str(datetime.timedelta(seconds=total_time))
     logger.info(
-        "Total run time: {} ({} s / img per device, on {} devices)".format(
-            total_time_str, total_time / (imgs_per_device * len(data_loader)), num_devices
-        )
-    )
-    total_infer_time = get_time_str(inference_timer.total_time)
-    # logger.info(
-    #     "Model inference time: {} ({} s / img per device, on {} devices)".format(
-    #         total_infer_time,
-    #         inference_timer.total_time * num_devices / len(dataset),
-    #         num_devices,
-    #     )
-    # )
-    logger.info(
-        "Model inference time: {} ({} s / img per device, on {} devices)".format(
-            total_infer_time,
-            inference_timer.total_time / (imgs_per_device * (len(data_loader) - warmup)),
-            num_devices,
-        )
-    )
-    logger.info(
-        "Model inference performance: {} imgs / s per device, on {} devices)".format(
-            (imgs_per_device * (len(data_loader) - warmup)) / inference_timer.total_time,
-            num_devices,
+        "Total inference time: {} ({} s / img per device, on {} devices)".format(
+            total_time_str, total_time * num_devices / len(dataset), num_devices
         )
     )
 

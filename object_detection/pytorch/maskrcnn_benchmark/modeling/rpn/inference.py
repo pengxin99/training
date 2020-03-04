@@ -24,7 +24,6 @@ class RPNPostProcessor(torch.nn.Module):
         min_size,
         box_coder=None,
         fpn_post_nms_top_n=None,
-        fpn_post_nms_per_batch=True,
     ):
         """
         Arguments:
@@ -48,7 +47,6 @@ class RPNPostProcessor(torch.nn.Module):
         if fpn_post_nms_top_n is None:
             fpn_post_nms_top_n = post_nms_top_n
         self.fpn_post_nms_top_n = fpn_post_nms_top_n
-        self.fpn_post_nms_per_batch = fpn_post_nms_per_batch
 
     def add_gt_proposals(self, proposals, targets):
         """
@@ -156,16 +154,16 @@ class RPNPostProcessor(torch.nn.Module):
         # different behavior during training and during testing:
         # during training, post_nms_top_n is over *all* the proposals combined, while
         # during testing, it is over the proposals for each image
-        # NOTE: it should be per image, and not per batch. However, to be consistent 
-        # with Detectron, the default is per batch (see Issue #672)
-        if self.training and self.fpn_post_nms_per_batch:
+        # TODO resolve this difference and make it consistent. It should be per image,
+        # and not per batch
+        if self.training:
             objectness = torch.cat(
                 [boxlist.get_field("objectness") for boxlist in boxlists], dim=0
             )
             box_sizes = [len(boxlist) for boxlist in boxlists]
             post_nms_top_n = min(self.fpn_post_nms_top_n, len(objectness))
             _, inds_sorted = torch.topk(objectness, post_nms_top_n, dim=0, sorted=True)
-            inds_mask = torch.zeros_like(objectness, dtype=torch.bool)
+            inds_mask = torch.zeros_like(objectness, dtype=torch.uint8)
             inds_mask[inds_sorted] = 1
             inds_mask = inds_mask.split(box_sizes)
             for i in range(num_images):
@@ -191,7 +189,6 @@ def make_rpn_postprocessor(config, rpn_box_coder, is_train):
     if not is_train:
         pre_nms_top_n = config.MODEL.RPN.PRE_NMS_TOP_N_TEST
         post_nms_top_n = config.MODEL.RPN.POST_NMS_TOP_N_TEST
-    fpn_post_nms_per_batch = config.MODEL.RPN.FPN_POST_NMS_PER_BATCH
     nms_thresh = config.MODEL.RPN.NMS_THRESH
     min_size = config.MODEL.RPN.MIN_SIZE
     box_selector = RPNPostProcessor(
@@ -201,6 +198,5 @@ def make_rpn_postprocessor(config, rpn_box_coder, is_train):
         min_size=min_size,
         box_coder=rpn_box_coder,
         fpn_post_nms_top_n=fpn_post_nms_top_n,
-        fpn_post_nms_per_batch=fpn_post_nms_per_batch,
     )
     return box_selector
