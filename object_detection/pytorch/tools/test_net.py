@@ -39,6 +39,8 @@ def main():
                         help='folder to save profiling result')
     parser.add_argument('--iters', type=int, default=6,
                         help='profile iteration number')
+    parser.add_argument('--warmup', type=int, default=5,
+                        help='num of warmup')
 
     args = parser.parse_args()
 
@@ -54,6 +56,8 @@ def main():
 
     cfg.merge_from_file(args.config_file)
     cfg.merge_from_list(args.opts)
+    if cfg.SOLVER.MAX_ITER != 0:
+        cfg.SOLVER.MAX_ITER += args.warmup
     cfg.freeze()
 
     save_dir = ""
@@ -98,7 +102,7 @@ def main():
             expected_results_sigma_tol=cfg.TEST.EXPECTED_RESULTS_SIGMA_TOL,
             output_folder=output_folder,
             log_path=args.log,
-            iterations=args.iters
+            warmup=args.warmup
         )
         synchronize()
 

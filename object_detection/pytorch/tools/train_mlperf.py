@@ -109,7 +109,7 @@ def cast_frozen_bn_to_half(module):
         cast_frozen_bn_to_half(child)
     return module
 
-def train(cfg, local_rank, distributed, log_path, iters):
+def train(cfg, local_rank, distributed, log_path, warmup=0):
     # Model logging
     print_mlperf(key=mlperf_log.INPUT_BATCH_SIZE, value=cfg.SOLVER.IMS_PER_BATCH)
     print_mlperf(key=mlperf_log.BATCH_SIZE_TEST, value=cfg.TEST.IMS_PER_BATCH)
@@ -203,16 +203,16 @@ def train(cfg, local_rank, distributed, log_path, iters):
         checkpoint_period,
         arguments,
         log_path,
-        iters,
+        warmup=warmup,
         per_iter_start_callback_fn=functools.partial(mlperf_log_epoch_start, iters_per_epoch=iters_per_epoch),
         per_iter_end_callback_fn=per_iter_callback_fn,
     )
 
     end_train_time = time.time()
     total_training_time = end_train_time - start_train_time
-    print(
-            "&&&& MLPERF METRIC THROUGHPUT per GPU={:.4f} iterations / s".format((arguments["iteration"] * 1.0) / total_training_time)
-    )
+    # print(
+    #         "&&&& MLPERF METRIC THROUGHPUT per GPU={:.4f} iterations / s".format((arguments["iteration"] * 1.0) / total_training_time)
+    # )
 
     return model
 
@@ -241,6 +241,8 @@ def main():
                         help='folder to save profiling result')
     parser.add_argument('--iters', type=int, default=6,
                         help='profile iteration number')
+    parser.add_argument('--warmup', type=int, default=5,
+                        help='num of warmup')
 
     args = parser.parse_args()
 
@@ -286,6 +288,8 @@ def main():
 
     cfg.merge_from_file(args.config_file)
     cfg.merge_from_list(args.opts)
+    if cfg.SOLVER.MAX_ITER != 0:
+        cfg.SOLVER.MAX_ITER += args.warmup
     cfg.freeze()
 
     output_dir = cfg.OUTPUT_DIR
@@ -317,7 +321,7 @@ def main():
         logger.info(config_str)
     logger.info("Running with config:\n{}".format(cfg))
 
-    model = train(cfg, args.local_rank, args.distributed, args.log, args.iters)
+    model = train(cfg, args.local_rank, args.distributed, args.log, args.warmup)
 
     print_mlperf(key=mlperf_log.RUN_FINAL)
 

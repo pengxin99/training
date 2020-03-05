@@ -53,7 +53,7 @@ def do_train(
     checkpoint_period,
     arguments,
     log_path='./log/',
-    iters=6,
+    warmup=0,
     per_iter_start_callback_fn=None,
     per_iter_end_callback_fn=None,
 ):
@@ -67,18 +67,14 @@ def do_train(
     end = time.time()
 
     if os.environ.get('PROFILE') == "1":
-        for iteration, (images, targets, _) in enumerate(data_loader, start_iter):
-
-            if iteration > iters-1:
-                break 
+        for iteration, (images, targets, _) in enumerate(data_loader, start_iter + 1):
 
             with torch.autograd.profiler.profile() as prof:
 
                 if per_iter_start_callback_fn is not None:
-                    per_iter_start_callback_fn(iteration=iteration)
+                    per_iter_start_callback_fn(iteration=iteration - 1)
    
                 data_time = time.time() - end
-                iteration = iteration + 1
                 arguments["iteration"] = iteration
     
                 scheduler.step()
@@ -138,16 +134,11 @@ def do_train(
                             break
             prof.export_chrome_trace(os.path.join(log_path, 'result_' + str(iteration) + '.json'))
     else:
-        for iteration, (images, targets, _) in enumerate(data_loader, start_iter):
-
-            #if iteration > iters-1:
-            #    break
-
+        for iteration, (images, targets, _) in enumerate(data_loader, (start_iter + 1)):
             if per_iter_start_callback_fn is not None:
-                per_iter_start_callback_fn(iteration=iteration)
+                per_iter_start_callback_fn(iteration=iteration - 1)
 
             data_time = time.time() - end
-            iteration = iteration + 1
             arguments["iteration"] = iteration
 
             scheduler.step()
@@ -169,14 +160,15 @@ def do_train(
             optimizer.step()
             optimizer.zero_grad()
 
-            batch_time = time.time() - end
+            if (iteration - start_iter) > warmup:
+                batch_time = time.time() - end
+                meters.update(time=batch_time, data=data_time)
             end = time.time()
-            meters.update(time=batch_time, data=data_time)
 
-            eta_seconds = meters.time.global_avg * (max_iter - iteration)
-            eta_string = str(datetime.timedelta(seconds=int(eta_seconds)))
 
             if iteration % 20 == 0 or iteration == max_iter:
+                eta_seconds = meters.time.global_avg * (iteration - start_iter)
+                eta_string = str(datetime.timedelta(seconds=int(eta_seconds)))
                 logger.info(
                     meters.delimiter.join(
                         [
@@ -212,6 +204,15 @@ def do_train(
     total_time_str = str(datetime.timedelta(seconds=total_training_time))
     logger.info(
         "Total training time: {} ({:.4f} s / it)".format(
-            total_time_str, total_training_time / (max_iter)
+            total_time_str, total_training_time / (max_iter - start_iter)
+        )
+    )
+    if hasattr(data_loader.batch_sampler, "batch_sampler"):
+        batch_size = data_loader.batch_sampler.batch_sampler.batch_size
+    else:
+        batch_size = data_loader.batch_sampler.batch_size
+    logger.info(
+        "&&&& MLPERF METRIC THROUGHPUT per device={:.4f} imgs / s)".format(
+            meters.time.global_avg / batch_size
         )
     )
