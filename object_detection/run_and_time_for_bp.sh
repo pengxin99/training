@@ -40,7 +40,7 @@ if [ $MODE = training ]; then
     NUM_THREADS=$CORES
 else
     TOTAL_CORES=`expr $CORES \* $SOCKETS`
-    NUM_THREADS=4
+    NUM_THREADS=$CORES
 fi
 
 echo "running benchmark"
@@ -58,11 +58,11 @@ if [ $MODE = training ]; then
     export TRAIN=1
     PROFILE_DIR="./log/train/${i}/"
     time python tools/train_mlperf.py --log ${PROFILE_DIR} --config-file "configs/e2e_mask_rcnn_R_50_FPN_1x.yaml" \
-           DATALOADER.NUM_WORKERS 1 SOLVER.IMS_PER_BATCH 4 TEST.IMS_PER_BATCH $BATCH_SIZE SOLVER.MAX_ITER ${ITERATIONS} SOLVER.STEPS "(480000, 640000)" SOLVER.BASE_LR 0.0025 MODEL.DEVICE cpu &
+           DATALOADER.NUM_WORKERS 1 SOLVER.IMS_PER_BATCH $BATCH_SIZE TEST.IMS_PER_BATCH $BATCH_SIZE SOLVER.MAX_ITER ${ITERATIONS} SOLVER.STEPS "(480000, 640000)" SOLVER.BASE_LR 0.0025 MODEL.DEVICE cpu &
 else
     export TRAIN=0
     PROFILE_DIR="./log/infer/${i}/"
-    time python tools/test_net.py --warmup $WARMUP --iters ${ITERATIONS} --log ${PROFILE_DIR} --config-file "configs/e2e_mask_rcnn_R_50_FPN_1x.yaml" DATALOADER.NUM_WORKERS 1 SOLVER.MAX_ITER ${ITERATIONS} TEST.IMS_PER_BATCH  $BATCH_SIZE MODEL.DEVICE cpu &
+    time python tools/test_net.py --warmup $WARMUP --iters ${ITERATIONS} --log ${PROFILE_DIR} --config-file "configs/e2e_mask_rcnn_R_50_FPN_1x.yaml" DATALOADER.NUM_WORKERS 1 SOLVER.MAX_ITER ${ITERATIONS} TEST.IMS_PER_BATCH $BATCH_SIZE MODEL.DEVICE cpu &
 fi
 done
 set +x
