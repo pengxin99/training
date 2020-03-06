@@ -2,11 +2,9 @@ import os
 import torch
 import torch.nn as nn
 from base_model import ResNet34
-from mlperf_compliance import mlperf_log
-from mlperf_logger import ssd_print
 from torch.utils import mkldnn as mkldnn_utils
 
-class SSD300(nn.Module):
+class SSD_R34(nn.Module):
     """
         Build a SSD module to take 300x300 image input,
         and output 8732 per class bounding boxes
@@ -14,41 +12,32 @@ class SSD300(nn.Module):
         vggt: pretrained vgg16 (partial) model
         label_num: number of classes (including background 0)
     """
-    def __init__(self, label_num, backbone='resnet34', model_path="./resnet34-333f7ec4.pth"):
+    def __init__(self, label_num, backbone='resnet34', model_path="./resnet34-333f7ec4.pth",strides=[3,3 ,2 ,2 ,2 ,2]):
 
-        super(SSD300, self).__init__()
+        super(SSD_R34, self).__init__()
 
         self.label_num = label_num
-
+        self.strides = strides
         if backbone == 'resnet34':
             self.model = ResNet34()
             if os.environ.get('USE_MKLDNN') == "1":
                 self.model = mkldnn_utils.to_mkldnn(self.model)
-            ssd_print(key=mlperf_log.BACKBONE, value='resnet34')
             out_channels = 256
-            out_size = 38
             self.out_chan = [out_channels, 512, 512, 256, 256, 256]
-            ssd_print(key=mlperf_log.LOC_CONF_OUT_CHANNELS,
-                                 value=self.out_chan)
-
         else:
             raise ValueError('Invalid backbone chosen')
 
-        self._build_additional_features(out_size, self.out_chan)
+        self._build_additional_features(self.out_chan)
 
         # after l2norm, conv7, conv8_2, conv9_2, conv10_2, conv11_2
         # classifer 1, 2, 3, 4, 5 ,6
 
         self.num_defaults = [4, 6, 6, 6, 4, 4]
-        ssd_print(key=mlperf_log.NUM_DEFAULTS_PER_CELL,
-                             value=self.num_defaults)
         self.loc = []
         self.conf = []
-
         for nd, oc in zip(self.num_defaults, self.out_chan):
-            self.loc.append(nn.Conv2d(oc, nd*4, kernel_size=3, padding=1))
-            self.conf.append(nn.Conv2d(oc, nd*label_num, kernel_size=3, padding=1))
-
+            self.loc.append(nn.Conv2d(oc, nd*4, kernel_size=3, padding=1,stride=self.strides[0]))
+            self.conf.append(nn.Conv2d(oc, nd*label_num, kernel_size=3, padding=1,stride=self.strides[1]))
 
         self.loc = nn.ModuleList(self.loc)
         self.conf = nn.ModuleList(self.conf)
@@ -59,30 +48,22 @@ class SSD300(nn.Module):
             self.loc = mkldnn_utils.to_mkldnn(self.loc)
             self.conf = mkldnn_utils.to_mkldnn(self.conf)
 
-    def _build_additional_features(self, input_size, input_channels):
+    def _build_additional_features(self, input_channels):
         idx = 0
-        if input_size == 38:
-            idx = 0
-        elif input_size == 19:
-            idx = 1
-        elif input_size == 10:
-            idx = 2
-
         self.additional_blocks = []
-
-        if input_size == 38:
-            self.additional_blocks.append(nn.Sequential(
-                nn.Conv2d(input_channels[idx], 256, kernel_size=1),
-                nn.ReLU(inplace=True),
-                nn.Conv2d(256, input_channels[idx+1], kernel_size=3, padding=1, stride=2),
-                nn.ReLU(inplace=True),
-            ))
-            idx += 1
+        
+        self.additional_blocks.append(nn.Sequential(
+            nn.Conv2d(input_channels[idx], 256, kernel_size=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(256, input_channels[idx+1], kernel_size=3, padding=1,stride=self.strides[2]),
+            nn.ReLU(inplace=True),
+        ))
+        idx += 1
 
         self.additional_blocks.append(nn.Sequential(
             nn.Conv2d(input_channels[idx], 256, kernel_size=1),
             nn.ReLU(inplace=True),
-            nn.Conv2d(256, input_channels[idx+1], kernel_size=3, padding=1, stride=2),
+            nn.Conv2d(256, input_channels[idx+1], kernel_size=3, padding=1, stride=self.strides[3]),
             nn.ReLU(inplace=True),
         ))
         idx += 1
@@ -91,7 +72,7 @@ class SSD300(nn.Module):
         self.additional_blocks.append(nn.Sequential(
             nn.Conv2d(input_channels[idx], 128, kernel_size=1),
             nn.ReLU(inplace=True),
-            nn.Conv2d(128, input_channels[idx+1], kernel_size=3, padding=1, stride=2),
+            nn.Conv2d(128, input_channels[idx+1], kernel_size=3, padding=1, stride=self.strides[4]),
             nn.ReLU(inplace=True),
         ))
         idx += 1
@@ -100,20 +81,20 @@ class SSD300(nn.Module):
         self.additional_blocks.append(nn.Sequential(
             nn.Conv2d(input_channels[idx], 128, kernel_size=1),
             nn.ReLU(inplace=True),
-            nn.Conv2d(128, input_channels[idx+1], kernel_size=3),
+            nn.Conv2d(128, input_channels[idx+1], kernel_size=3,stride=self.strides[5]),
             nn.ReLU(inplace=True),
         ))
         idx += 1
 
-        # Only necessary in VGG for now
-        if input_size >= 19:
-            # conv11_1, conv11_2
-            self.additional_blocks.append(nn.Sequential(
-                nn.Conv2d(input_channels[idx], 128, kernel_size=1),
-                nn.ReLU(inplace=True),
-                nn.Conv2d(128, input_channels[idx+1], kernel_size=3),
-                nn.ReLU(inplace=True),
-            ))
+
+
+        # conv11_1, conv11_2
+        self.additional_blocks.append(nn.Sequential(
+            nn.Conv2d(input_channels[idx], 128, kernel_size=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(128, input_channels[idx+1], kernel_size=3),
+            nn.ReLU(inplace=True),
+        ))
 
         self.additional_blocks = nn.ModuleList(self.additional_blocks)
 
@@ -128,19 +109,23 @@ class SSD300(nn.Module):
                 if param.dim() > 1: nn.init.xavier_uniform_(param)
 
     # Shape the classifier to the view of bboxes
-    def bbox_view(self, src, loc, conf):
+    def bbox_view(self, src, loc, conf,extract_shapes=False):
         ret = []
+        features_shapes = []
         for s, l, c in zip(src, loc, conf):
             if os.environ.get('USE_MKLDNN') == "1":
                 ret.append((l(s).to_dense().view(s.size(0), 4, -1), c(s).to_dense().view(s.size(0), self.label_num, -1)))
             else:
                 ret.append((l(s).view(s.size(0), 4, -1), c(s).view(s.size(0), self.label_num, -1)))
-
+            # extract shapes for prior box initliziation 
+            if extract_shapes:
+                ls=l(s)
+                features_shapes.append([ls.shape[2],ls.shape[3]])
         locs, confs = list(zip(*ret))
         locs, confs = torch.cat(locs, 2).contiguous(), torch.cat(confs, 2).contiguous()
-        return locs, confs
+        return locs, confs,features_shapes
 
-    def forward(self, data):
+    def forward(self, data,extract_shapes=False):
         if os.environ.get('USE_MKLDNN') == "1":
             layers = self.model(data.to_mkldnn())
         else:
@@ -148,16 +133,15 @@ class SSD300(nn.Module):
 
         # last result from network goes into additional blocks
         x = layers[-1]
+        
         additional_results = []
         for i, l in enumerate(self.additional_blocks):
+            
             x = l(x)
             additional_results.append(x)
 
         src = [*layers, *additional_results]
-        # Feature Map 38x38x4, 19x19x6, 10x10x6, 5x5x6, 3x3x4, 1x1x4
-
-        locs, confs = self.bbox_view(src, self.loc, self.conf)
-
-        # For SSD 300, shall return nbatch x 8732 x {nlabels, nlocs} results
-        return locs, confs
-
+        # Feature maps sizes depend on the image size. For 300x300 with strides=[1,1,2,2,2,1] it is 38x38x4, 19x19x6, 10x10x6, 5x5x6, 3x3x4, 1x1x4 
+        locs, confs,features_shapes = self.bbox_view(src, self.loc, self.conf,extract_shapes=extract_shapes)
+        # For SSD 300 with strides=[1,1,2,2,2,1] , shall return nbatch x 8732 x {nlabels, nlocs} results 
+        return locs, confs,features_shapes

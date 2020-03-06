@@ -155,12 +155,10 @@ def make_data_loader(cfg, is_train=True, is_distributed=False, start_iter=0):
     )
     DatasetCatalog = paths_catalog.DatasetCatalog
     dataset_list = cfg.DATASETS.TRAIN if is_train else cfg.DATASETS.TEST
-    print("data_list:", dataset_list)
 
     transforms = build_transforms(cfg, is_train)
     datasets, epoch_size = build_dataset(dataset_list, transforms, DatasetCatalog, is_train)
 
-    print("=================datasets len:", len(datasets[0]))
     data_loaders = []
     for dataset in datasets:
         sampler = make_data_sampler(dataset, shuffle, is_distributed)
@@ -179,7 +177,6 @@ def make_data_loader(cfg, is_train=True, is_distributed=False, start_iter=0):
     if is_train:
         # during training, a single (possibly concatenated) data_loader is returned
         assert len(data_loaders) == 1
-        print("======epoch:{}, images_per_batch:{}".format(epoch_size, images_per_batch))
         iterations_per_epoch = epoch_size // images_per_batch + 1
         return data_loaders[0], iterations_per_epoch
     return data_loaders

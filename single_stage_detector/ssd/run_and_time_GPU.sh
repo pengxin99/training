@@ -42,9 +42,13 @@ set -x
 MODE=inference
 THRESHOLD=0.23
 PERF_PRERUN_WARMUP=5
-NUMEPOCHS=${NUMEPOCHS:-1}
+NUMEPOCHS=${NUMEPOCHS:-70}
 LR=${LR:-"2.5e-3"}
-TOTLE_ITERATIONS=${TOTLE_ITERATIONS:-10}
+TOTLE_ITERATIONS=${TOTLE_ITERATIONS:-0}
+BATCH_SIZE=32
+LR=${LR:-"2.5e-3"}
+ARCH="ssd300"
+DUMMY=0 # (0)real data,(1)dummy data
 
 echo "running benchmark"
 
@@ -55,13 +59,15 @@ python -m bind_launch --nsockets_per_node ${DGXNSOCKET} \
                       --ncores_per_socket ${DGXSOCKETCORES} \
                       --nproc_per_node $SLURM_NTASKS_PER_NODE $MULTI_NODE \
  performance_test.py \
+   -a $ARCH \
+   -b $BATCH_SIZE \
   --epochs "${NUMEPOCHS}" \
   --warmup-factor 0 \
   --lr "${LR}" \
   --no-save \
   --threshold=$THRESHOLD \
   --data ${DATASET_DIR} \
-  --iteration-perf-test "${TOTLE_ITERATIONS}" \
+  --totle-iteration "${TOTLE_ITERATIONS}" \
   -m $MODE \
   --perf-prerun-warmup $PERF_PRERUN_WARMUP \
   ${EXTRA_PARAMS[@]} ; ret_code=$?
