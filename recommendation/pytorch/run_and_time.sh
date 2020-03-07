@@ -48,10 +48,13 @@ echo "PRETRAINED_MODEL : ${PRETRAINED_MODEL}"
 # Get the multipliers for expanding the dataset
 #USER_MUL=${USER_MUL:-16}
 #ITEM_MUL=${ITEM_MUL:-32}
-USER_MUL=${USER_MUL:-4}
-ITEM_MUL=${ITEM_MUL:-16}
+USER_MUL=${USER_MUL:-1}
+ITEM_MUL=${ITEM_MUL:-1}
 
 DATASET_DIR=${BASEDIR}/${DATASET}x${USER_MUL}x${ITEM_MUL}
+
+export KMP_AFFINITY=granularity=fine,noduplicates,compact,1,0
+export OMP_NUM_THREADS=56
 
 if [ -d ${DATASET_DIR} ]
 then
@@ -60,7 +63,7 @@ then
     start_fmt=$(date +%Y-%m-%d\ %r)
     echo "STARTING TIMING RUN AT $start_fmt"
 
-	python -u ncf.py ${DATASET_DIR} \
+    numactl --physcpubind=0-55 --membind=0 python -u ncf.py ${DATASET_DIR} \
         -l 0.0002 \
         -b 65536 \
         --layers 256 256 128 64 \
