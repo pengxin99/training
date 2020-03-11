@@ -29,25 +29,28 @@ git clone https://github.com/SeanNaren/warp-ctc.git && \
 ```
 
 # dataset
+First goto the dir:
+```
+cd training/training/speech_recognition/
+```
+
 download dataset: ./download_dataset.sh 
 you can also use local dataset by symlink like:
 ```
-mkdir -p pytorch/datasets/coco
 ln -s /path_to_deepspeech/libri_train_manifest.csv libri_train_manifest.csv
 ln -s /path_to_deepspeech/libri_val_manifest.csv libri_val_manifest.csv
 
 ```
 
-# download weight file:
-```
+# weight file:
+put weight file at `training/speech_recognition/models/deepspeech_final.pth.tar`
 
-```
 
-# run training and inference: cd pytorch/
+# run training and inference: cd ./pytorch/
 
 ## training
 ```
-./run_and_time.sh
+./run_training_multi_instances.sh
 ```
 
 ## inference
