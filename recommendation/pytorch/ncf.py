@@ -24,7 +24,6 @@ from neumf import NeuMF
 
 from mlperf_compliance import mlperf_log
 from torch.utils import mkldnn as mkldnn_utils
-import pdb 
 
 warnings.filterwarnings("ignore")
 
@@ -129,7 +128,7 @@ def val_epoch(model, x, y, dup_mask, real_indices, K, samples_per_user, num_user
         result['hit_rate'] = hits/num_user
         result['NDCG'] = ndcg/num_user
         result['loss'] = loss
-        utils.save_result(result, output)
+        # utils.save_result(result, output)
 
     return hits/num_user, ndcg/num_user
 
@@ -150,9 +149,9 @@ def main():
     config['local_timestamp'] = str(datetime.now())
     run_dir = "./run/neumf/{}".format(config['timestamp'])
     print("Saving config and results to {}".format(run_dir))
-    if not os.path.exists(run_dir) and run_dir != '':
-        os.makedirs(run_dir)
-    utils.save_config(config, run_dir)
+    #if not os.path.exists(run_dir) and run_dir != '':
+    #    os.makedirs(run_dir)
+    #utils.save_config(config, run_dir)
 
     # Check that GPUs are actually available
     use_cuda = not args.no_cuda and torch.cuda.is_available()
@@ -288,8 +287,8 @@ def main():
     print("{} parameters".format(utils.count_parameters(model)))
 
     # Save model text description
-    with open(os.path.join(run_dir, 'model.txt'), 'w') as file:
-        file.write(str(model))
+    #with open(os.path.join(run_dir, 'model.txt'), 'w') as file:
+    #    file.write(str(model))
 
     # Add optimizer and loss to graph
     params = model.parameters()
