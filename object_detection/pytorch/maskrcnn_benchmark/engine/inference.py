@@ -11,21 +11,43 @@ from maskrcnn_benchmark.data.datasets.evaluation import evaluate
 from ..utils.comm import is_main_process
 from ..utils.comm import all_gather
 from ..utils.comm import synchronize
+from ..utils.timer import Timer, get_time_str
 
 
-def compute_on_dataset(model, data_loader, device):
+def compute_on_dataset(model, data_loader, device, log_path, timer=None):
     model.eval()
     results_dict = {}
     cpu_device = torch.device("cpu")
-    for i, batch in enumerate(tqdm(data_loader)):
-        images, targets, image_ids = batch
-        images = images.to(device)
-        with torch.no_grad():
-            output = model(images)
-            output = [o.to(cpu_device) for o in output]
-        results_dict.update(
-            {img_id: result for img_id, result in zip(image_ids, output)}
-        )
+
+    if os.environ.get('PROFILE') == "1":
+        for i, batch in enumerate(tqdm(data_loader)):
+            with torch.autograd.profiler.profile() as prof:
+                images, targets, image_ids = batch
+                images = images.to(device)
+                with torch.no_grad():
+                    output = model(images)
+                    output = [o.to(cpu_device) for o in output]
+                results_dict.update(
+                    {img_id: result for img_id, result in zip(image_ids, output)}
+                )
+            prof.export_chrome_trace(os.path.join(log_path, 'result_' + str(i) + '.json'))
+    else:
+        for i, batch in enumerate(tqdm(data_loader)):
+            images, targets, image_ids = batch
+            images = images.to(device)
+            with torch.no_grad():
+                if timer:
+                    timer.tic()
+                output = model(images)
+                if timer:
+                    if not device.type == 'cpu':
+                        torch.cuda.synchronize()
+                    timer.toc()
+                output = [o.to(cpu_device) for o in output]
+            results_dict.update(
+                {img_id: result for img_id, result in zip(image_ids, output)}
+            )
+
     return results_dict
 
 
@@ -61,6 +83,8 @@ def inference(
         expected_results=(),
         expected_results_sigma_tol=4,
         output_folder=None,
+        log_path='./log/',
+        warmup=0
 ):
     # convert to a torch.device for efficiency
     device = torch.device(device)
@@ -71,16 +95,37 @@ def inference(
     )
     logger = logging.getLogger("maskrcnn_benchmark.inference")
     dataset = data_loader.dataset
-    logger.info("Start evaluation on {} dataset({} images).".format(dataset_name, len(dataset)))
-    start_time = time.time()
-    predictions = compute_on_dataset(model, data_loader, device)
+    if hasattr(data_loader.batch_sampler, "batch_sampler"):
+        batch_size = data_loader.batch_sampler.batch_sampler.batch_size
+    else:
+        batch_size = data_loader.batch_sampler.batch_size
+    logger.info("Start evaluation on {} dataset({} iterations).".format(dataset_name, len(data_loader)))
+    total_timer = Timer()
+    inference_timer = Timer(warmup)
+    total_timer.tic()
+    predictions = compute_on_dataset(model, data_loader, device, log_path, inference_timer)
     # wait for all processes to complete before measuring the time
     synchronize()
-    total_time = time.time() - start_time
-    total_time_str = str(datetime.timedelta(seconds=total_time))
+    total_time = total_timer.toc(average=False)
+    total_time_str = get_time_str(total_time)
+    totle_imgs = batch_size * (len(data_loader) - warmup)
     logger.info(
-        "Total inference time: {} ({} s / img per device, on {} devices)".format(
-            total_time_str, total_time * num_devices / len(dataset), num_devices
+        "Total run time: {} ({} s / img per device, on {} devices)".format(
+            total_time_str, total_time / totle_imgs, num_devices
+        )
+    )
+    total_infer_time = get_time_str(inference_timer.total_time)
+    logger.info(
+        "Model inference time: {} ({} s / img per device, on {} devices)".format(
+            total_infer_time,
+            inference_timer.total_time / totle_imgs,
+            num_devices,
+        )
+    )
+    logger.info(
+        "Model inference performance: {} imgs / s per device, on {} devices".format(
+            totle_imgs / inference_timer.total_time,
+            num_devices,
         )
     )
 

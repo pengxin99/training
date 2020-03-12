@@ -2,6 +2,7 @@
 import bisect
 import copy
 import logging
+import os
 
 import torch.utils.data
 from maskrcnn_benchmark.utils.comm import get_world_size
@@ -115,8 +116,11 @@ def make_data_loader(cfg, is_train=True, is_distributed=False, start_iter=0):
         ), "SOLVER.IMS_PER_BATCH ({}) must be divisible by the number "
         "of GPUs ({}) used.".format(images_per_batch, num_gpus)
         images_per_gpu = images_per_batch // num_gpus
-        shuffle = True
-        num_iters = cfg.SOLVER.MAX_ITER
+        if os.environ.get('PROFILE') == "1":
+            shuffle = False
+        else:
+            shuffle = True
+        num_iters = cfg.SOLVER.MAX_ITER + start_iter
     else:
         images_per_batch = cfg.TEST.IMS_PER_BATCH
         assert (
@@ -125,7 +129,7 @@ def make_data_loader(cfg, is_train=True, is_distributed=False, start_iter=0):
         "of GPUs ({}) used.".format(images_per_batch, num_gpus)
         images_per_gpu = images_per_batch // num_gpus
         shuffle = False if not is_distributed else True
-        num_iters = None
+        num_iters = cfg.SOLVER.MAX_ITER if cfg.SOLVER.MAX_ITER != 0 else None
         start_iter = 0
 
     if images_per_gpu > 1:

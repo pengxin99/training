@@ -1,4 +1,5 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
+import os
 import numpy as np
 import torch
 from torch import nn
@@ -35,7 +36,10 @@ class MaskPostProcessor(nn.Module):
             results (list[BoxList]): one BoxList for each image, containing
                 the extra field mask
         """
-        mask_prob = x.sigmoid()
+        if os.environ.get('USE_MKLDNN') == "1":
+            mask_prob = x.to_dense().sigmoid()
+        else:
+            mask_prob = x.sigmoid()
 
         # select masks coresponding to the predicted classes
         num_masks = x.shape[0]

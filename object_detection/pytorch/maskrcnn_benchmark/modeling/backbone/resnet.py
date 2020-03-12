@@ -18,6 +18,7 @@ Custom implementations may be written in user code and hooked in via the
 """
 from collections import namedtuple
 
+import os
 import torch
 import torch.nn.functional as F
 from torch import nn
@@ -137,6 +138,8 @@ class ResNet(nn.Module):
 
     def forward(self, x):
         outputs = []
+        if os.environ.get('USE_MKLDNN') == "1":
+            x = x.to_mkldnn()
         x = self.stem(x)
         for stage_name in self.stages:
             x = getattr(self, stage_name)(x)
@@ -293,7 +296,6 @@ class Bottleneck(nn.Module):
 
     def forward(self, x):
         identity = x
-
         out = self.conv1(x)
         out = self.bn1(out)
         out = F.relu_(out)

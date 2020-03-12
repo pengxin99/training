@@ -23,6 +23,7 @@ import utils
 from neumf import NeuMF
 
 from mlperf_compliance import mlperf_log
+from torch.utils import mkldnn as mkldnn_utils
 
 warnings.filterwarnings("ignore")
 
@@ -77,14 +78,17 @@ def parse_args():
     parser.add_argument('--inf', type=int, default=0,
                         help='Only do inferece performance, default is False.')
     parser.add_argument('--pretrained_model', type=str, default="",
-                        help='model file path for inference')                   
+                        help='model file path for inference')       
+    parser.add_argument('--mkldnn', action='store_true', default=False,
+                    help='use mkldnn weight cache')
+    
     return parser.parse_args()
 
 
 # TODO: val_epoch is not currently supported on cpu
 def val_epoch(model, x, y, dup_mask, real_indices, K, samples_per_user, num_user, use_cuda=False, 
               output=None, epoch=None, loss=None):
-
+    args = parse_args()
     start = datetime.now()
     log_2 = math.log(2)
 
@@ -124,7 +128,7 @@ def val_epoch(model, x, y, dup_mask, real_indices, K, samples_per_user, num_user
         result['hit_rate'] = hits/num_user
         result['NDCG'] = ndcg/num_user
         result['loss'] = loss
-        utils.save_result(result, output)
+        # utils.save_result(result, output)
 
     return hits/num_user, ndcg/num_user
 
@@ -145,9 +149,9 @@ def main():
     config['local_timestamp'] = str(datetime.now())
     run_dir = "./run/neumf/{}".format(config['timestamp'])
     print("Saving config and results to {}".format(run_dir))
-    if not os.path.exists(run_dir) and run_dir != '':
-        os.makedirs(run_dir)
-    utils.save_config(config, run_dir)
+    #if not os.path.exists(run_dir) and run_dir != '':
+    #    os.makedirs(run_dir)
+    #utils.save_config(config, run_dir)
 
     # Check that GPUs are actually available
     use_cuda = not args.no_cuda and torch.cuda.is_available()
@@ -190,25 +194,25 @@ def main():
       with open(sampler_cache, "rb") as f:
         sampler, pos_users, pos_items, nb_items, _ = pickle.load(f)
     print(datetime.now(), "Alias table loaded.")
-
-    nb_users = len(sampler.num_regions)
-    train_users = torch.from_numpy(pos_users).type(torch.LongTensor)
-    train_items = torch.from_numpy(pos_items).type(torch.LongTensor)
+    
+    nb_users = len(sampler.num_regions)                                 # len(nb_users) = 138240
+    train_users = torch.from_numpy(pos_users).type(torch.LongTensor)    # len(train_users) = 19788248
+    train_items = torch.from_numpy(pos_items).type(torch.LongTensor)    # len(train_items) = 19788248
 
     mlperf_log.ncf_print(key=mlperf_log.INPUT_SIZE, value=len(train_users))
     # produce things not change between epoch
     # mask for filtering duplicates with real sample
     # note: test data is removed before create mask, same as reference
     # create label
-    train_label = torch.ones_like(train_users, dtype=torch.float32)
+    train_label = torch.ones_like(train_users, dtype=torch.float32) 
     neg_label = torch.zeros_like(train_label, dtype=torch.float32)
-    neg_label = neg_label.repeat(args.negative_samples)
-    train_label = torch.cat((train_label,neg_label))
+    neg_label = neg_label.repeat(args.negative_samples)     # len(neg_label) = 19788248 * 4
+    train_label = torch.cat((train_label,neg_label))        # len(train_label) = 19788248 * 5
     del neg_label
 
-    test_pos = [l[:,1].reshape(-1,1) for l in test_ratings]
-    test_negatives = [torch.LongTensor()] * args.user_scaling
-    test_neg_items = [torch.LongTensor()] * args.user_scaling
+    test_pos = [l[:,1].reshape(-1,1) for l in test_ratings] # test_ratings shape: 1,138240,2  test_pos shape: 1,138240,1
+    test_negatives = [torch.LongTensor()] * args.user_scaling   # shape 1
+    test_neg_items = [torch.LongTensor()] * args.user_scaling   # shape 1
     
     print(datetime.now(), "Loading test negatives.")
     for chunk in range(args.user_scaling):
@@ -219,10 +223,10 @@ def main():
         print(datetime.now(), "Test negative chunk {} of {} loaded ({} users).".format(
               chunk+1, args.user_scaling, test_negatives[chunk].size()))
 
-    test_neg_items = [l[:, 1] for l in test_negatives]
+    test_neg_items = [l[:, 1] for l in test_negatives]      # len: 4
 
     # create items with real sample at last position
-    test_items = [torch.cat((a.reshape(-1,args.valid_negative), b), dim=1)
+    test_items = [torch.cat((a.reshape(-1,args.valid_negative), b), dim=1)      # shape (1, 138240, 1000)
             for a, b in zip(test_neg_items, test_pos)]
     del test_ratings, test_neg_items
 
@@ -283,8 +287,8 @@ def main():
     print("{} parameters".format(utils.count_parameters(model)))
 
     # Save model text description
-    with open(os.path.join(run_dir, 'model.txt'), 'w') as file:
-        file.write(str(model))
+    #with open(os.path.join(run_dir, 'model.txt'), 'w') as file:
+    #    file.write(str(model))
 
     # Add optimizer and loss to graph
     params = model.parameters()
@@ -308,16 +312,16 @@ def main():
 
     # Create files for tracking training
     valid_results_file = os.path.join(run_dir, 'valid_results.csv')
-
+    
     # Calculate initial Hit Ratio and NDCG
-    samples_per_user = test_items.size(1)
+    samples_per_user = test_items.size(1)           # test_items.size(): 138240, 1000
     users_per_valid_batch = args.valid_batch_size // samples_per_user
 
-    test_users = test_users.split(users_per_valid_batch)
-    test_items = test_items.split(users_per_valid_batch)
+    test_users = test_users.split(users_per_valid_batch)    # test_users: 132,1048,1000
+    test_items = test_items.split(users_per_valid_batch)    # test_items: 132,1048,1000
     dup_mask = dup_mask.split(users_per_valid_batch)
     real_indices = real_indices.split(users_per_valid_batch)
-    
+
     #===========================================================================
     #======== Doing Inference here                        =====================
     #===========================================================================
@@ -332,8 +336,6 @@ def main():
         if not use_cuda:
             print('---load and map model to CPU---')
             model = torch.load(filename, map_location='cpu')
-        print(model)
-        print("{} parameters".format(utils.count_parameters(model)))
 
         begin = time.time()
         mlperf_log.ncf_print(key=mlperf_log.EVAL_START, value=0)
@@ -430,7 +432,7 @@ def main():
 
             loss.backward()
             optimizer.step()
-       
+
         del epoch_users, epoch_items, epoch_label, epoch_users_list, epoch_items_list, epoch_label_list, user, item, label
         train_time = time.time() - begin
         begin = time.time()
@@ -454,7 +456,7 @@ def main():
             save_dir = './model/'
             print("save %d epoch model to %s" % (epoch, save_dir))
             state = {'net':model.state_dict(), 'optimizer':optimizer.state_dict(), 'epoch':epoch}
-            torch.save(state, save_dir + str(epoch) + 'epoch_model.pth')
+            torch.save(model, save_dir + str(epoch) + '_epoch_model.pkl')
 
         mlperf_log.ncf_print(key=mlperf_log.EVAL_ACCURACY, value={"epoch": epoch, "value": hr})
         mlperf_log.ncf_print(key=mlperf_log.EVAL_TARGET, value=args.threshold)

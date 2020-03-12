@@ -1,4 +1,5 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
+import os
 import torch
 import torch.nn.functional as F
 from torch import nn
@@ -40,9 +41,15 @@ class RPNHead(nn.Module):
         logits = []
         bbox_reg = []
         for feature in x:
-            t = F.relu(self.conv(feature))
-            logits.append(self.cls_logits(t))
-            bbox_reg.append(self.bbox_pred(t))
+            if os.environ.get('USE_MKLDNN') == "1":
+                t = F.relu(self.conv(feature.to_mkldnn()))
+                logits.append(self.cls_logits(t).to_dense())
+                bbox_reg.append(self.bbox_pred(t).to_dense())
+            else:
+                t = F.relu(self.conv(feature))
+                logits.append(self.cls_logits(t))
+                bbox_reg.append(self.bbox_pred(t))
+
         return logits, bbox_reg
 
 

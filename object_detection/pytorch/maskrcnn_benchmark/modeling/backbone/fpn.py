@@ -1,4 +1,5 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
+import os
 import torch
 import torch.nn.functional as F
 from torch import nn
@@ -48,28 +49,57 @@ class FPN(nn.Module):
             results (tuple[Tensor]): feature maps after FPN layers.
                 They are ordered from highest resolution first.
         """
+
         last_inner = getattr(self, self.inner_blocks[-1])(x[-1])
+
         results = []
         results.append(getattr(self, self.layer_blocks[-1])(last_inner))
-        for feature, inner_block, layer_block in zip(
-            x[:-1][::-1], self.inner_blocks[:-1][::-1], self.layer_blocks[:-1][::-1]
-        ):
-            if not inner_block:
-                continue
-            inner_top_down = F.interpolate(last_inner, scale_factor=2, mode="nearest")
-            inner_lateral = getattr(self, inner_block)(feature)
-            # TODO use size instead of scale to make it robust to different sizes
-            # inner_top_down = F.upsample(last_inner, size=inner_lateral.shape[-2:],
-            # mode='bilinear', align_corners=False)
-            last_inner = inner_lateral + inner_top_down
-            results.insert(0, getattr(self, layer_block)(last_inner))
+        if os.environ.get('USE_MKLDNN') == "1":
+            for feature, inner_block, layer_block in zip(
+                x[:-1][::-1], self.inner_blocks[:-1][::-1], self.layer_blocks[:-1][::-1]
+            ):
+                if not inner_block:
+                    continue
+                last_inner = last_inner.to_dense()
+                inner_top_down = F.interpolate(last_inner, scale_factor=2, mode="nearest")
+                inner_lateral = getattr(self, inner_block)(feature)
+                # TODO use size instead of scale to make it robust to different sizes
+                # inner_top_down = F.upsample(last_inner, size=inner_lateral.shape[-2:],
+                # mode='bilinear', align_corners=False)
+                last_inner = inner_lateral.to_dense() + inner_top_down
+                last_inner = last_inner.to_mkldnn()
+                results.insert(0, getattr(self, layer_block)(last_inner))
 
-        if isinstance(self.top_blocks, LastLevelP6P7):
-            last_results = self.top_blocks(x[-1], results[-1])
-            results.extend(last_results)
-        elif isinstance(self.top_blocks, LastLevelMaxPool):
-            last_results = self.top_blocks(results[-1])
-            results.extend(last_results)
+            if isinstance(self.top_blocks, LastLevelP6P7):
+                last_results = self.top_blocks(x[-1], results[-1])
+                results.extend(last_results)
+            elif isinstance(self.top_blocks, LastLevelMaxPool):
+                last_results = self.top_blocks(results[-1])
+                results.extend(last_results)
+
+            for i in range(len(results)):
+                results[i] = results[i].to_dense()
+
+        else:
+            for feature, inner_block, layer_block in zip(
+                x[:-1][::-1], self.inner_blocks[:-1][::-1], self.layer_blocks[:-1][::-1]
+            ):
+                if not inner_block:
+                    continue
+                inner_top_down = F.interpolate(last_inner, scale_factor=2, mode="nearest")
+                inner_lateral = getattr(self, inner_block)(feature)
+                # TODO use size instead of scale to make it robust to different sizes
+                # inner_top_down = F.upsample(last_inner, size=inner_lateral.shape[-2:],
+                # mode='bilinear', align_corners=False)
+                last_inner = inner_lateral + inner_top_down
+                results.insert(0, getattr(self, layer_block)(last_inner))
+
+            if isinstance(self.top_blocks, LastLevelP6P7):
+                last_results = self.top_blocks(x[-1], results[-1])
+                results.extend(last_results)
+            elif isinstance(self.top_blocks, LastLevelMaxPool):
+                last_results = self.top_blocks(results[-1])
+                results.extend(last_results)
 
         return tuple(results)
 

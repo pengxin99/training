@@ -1,6 +1,7 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved.
 import torch
 import torchvision
+import os
 
 from maskrcnn_benchmark.structures.bounding_box import BoxList
 from maskrcnn_benchmark.structures.segmentation_mask import SegmentationMask
@@ -61,11 +62,15 @@ class COCODataset(torchvision.datasets.coco.CocoDetection):
             v: k for k, v in self.json_category_id_to_contiguous_id.items()
         }
         self.id_to_img_map = {k: v for k, v in enumerate(self.ids)}
-        self.transforms = transforms
+        self._transforms = transforms
 
     def __getitem__(self, idx):
+        if os.environ.get('PROFILE') == "1":
+            if os.environ.get('TRAIN') == "1":
+                idx = 8
+            else:
+                idx = 9
         img, anno = super(COCODataset, self).__getitem__(idx)
-
         # filter crowd annotations
         # TODO might be better to add an extra field
         anno = [obj for obj in anno if obj["iscrowd"] == 0]
@@ -90,8 +95,8 @@ class COCODataset(torchvision.datasets.coco.CocoDetection):
 
         target = target.clip_to_image(remove_empty=True)
 
-        if self.transforms is not None:
-            img, target = self.transforms(img, target)
+        if self._transforms is not None:
+            img, target = self._transforms(img, target)
 
         return img, target, idx
 

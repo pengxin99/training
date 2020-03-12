@@ -17,6 +17,8 @@ from maskrcnn_benchmark.utils.comm import synchronize, get_rank
 from maskrcnn_benchmark.utils.logger import setup_logger
 from maskrcnn_benchmark.utils.miscellaneous import mkdir
 
+from torch.utils import mkldnn as mkldnn_utils
+# from tensorboardX import SummaryWriter
 
 def main():
     parser = argparse.ArgumentParser(description="PyTorch Object Detection Inference")
@@ -33,6 +35,12 @@ def main():
         default=None,
         nargs=argparse.REMAINDER,
     )
+    parser.add_argument('--log', type=str, default='./',
+                        help='folder to save profiling result')
+    parser.add_argument('--iters', type=int, default=6,
+                        help='profile iteration number')
+    parser.add_argument('--warmup', type=int, default=5,
+                        help='num of warmup')
 
     args = parser.parse_args()
 
@@ -48,6 +56,8 @@ def main():
 
     cfg.merge_from_file(args.config_file)
     cfg.merge_from_list(args.opts)
+    if cfg.SOLVER.MAX_ITER != 0:
+        cfg.SOLVER.MAX_ITER += args.warmup
     cfg.freeze()
 
     save_dir = ""
@@ -78,6 +88,8 @@ def main():
             mkdir(output_folder)
             output_folders[idx] = output_folder
     data_loaders_val = make_data_loader(cfg, is_train=False, is_distributed=distributed)
+    if os.environ.get('USE_MKLDNN') == "1":
+        model = mkldnn_utils.to_mkldnn(model)
     for output_folder, dataset_name, data_loader_val in zip(output_folders, dataset_names, data_loaders_val):
         inference(
             model,
@@ -89,6 +101,8 @@ def main():
             expected_results=cfg.TEST.EXPECTED_RESULTS,
             expected_results_sigma_tol=cfg.TEST.EXPECTED_RESULTS_SIGMA_TOL,
             output_folder=output_folder,
+            log_path=args.log,
+            warmup=args.warmup
         )
         synchronize()
 

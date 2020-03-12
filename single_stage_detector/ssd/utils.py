@@ -254,7 +254,7 @@ class DefaultBoxes(object):
                     cx, cy = (j + 0.5) / fk[idx], (i + 0.5) / fk[idx]
                     self.default_boxes.append((cx, cy, w, h))
 
-        self.dboxes = torch.tensor(self.default_boxes)
+        self.dboxes = torch.tensor(self.default_boxes, dtype=torch.float)
         self.dboxes.clamp_(min=0, max=1)
         # For IoU calculation
         self.dboxes_ltrb = self.dboxes.clone()
@@ -516,53 +516,65 @@ class SSDTransformer(object):
 # Implement a datareader for COCO dataset
 class COCODetection(data.Dataset):
     def __init__(self, img_folder, annotate_file, transform=None):
-        self.img_folder = img_folder
-        self.annotate_file = annotate_file
+        if img_folder == None:
+            self.img_folder = None
+            self.images = [1] * 50000
+            self.label_info = [1] * 81
+            
+            self.img = torch.randn(3, 300, 300)
+            self.htot = 320
+            self.wtot = 320
+            self.bbox_sizes = torch.rand(8732, 4)
+            bbox_labels = torch.linspace(0, 50, steps=8732)
+            self.bbox_labels = bbox_labels.long()
+        else:    
+            self.img_folder = img_folder
+            self.annotate_file = annotate_file
 
-        # Start processing annotation
-        with open(annotate_file) as fin:
-            self.data = json.load(fin)
+            # Start processing annotation
+            with open(annotate_file) as fin:
+                self.data = json.load(fin)
+        
+            self.images = {}
+            
+            self.label_map = {}
+            self.label_info = {}
+            # print("Parsing COCO data...")
+            start_time = time.time()
+            # 0 stand for the background
+            cnt = 0
+            self.label_info[cnt] = "background"
+            for cat in self.data["categories"]:
+                cnt += 1
+                self.label_map[cat["id"]] = cnt
+                self.label_info[cnt] = cat["name"]
+            
+            # build inference for images
+            for img in self.data["images"]:
+                img_id = img["id"]
+                img_name = img["file_name"]
+                img_size = (img["height"], img["width"])
+                # print(img_name)
+                if img_id in self.images: raise Exception("dulpicated image record")
+                self.images[img_id] = (img_name, img_size, [])
 
-        self.images = {}
+            # read bboxes
+            for bboxes in self.data["annotations"]:
+                img_id = bboxes["image_id"]
+                category_id = bboxes["category_id"]
+                bbox = bboxes["bbox"]
+                bbox_label = self.label_map[bboxes["category_id"]]
+                self.images[img_id][2].append((bbox, bbox_label))
 
-        self.label_map = {}
-        self.label_info = {}
-        # print("Parsing COCO data...")
-        start_time = time.time()
-        # 0 stand for the background
-        cnt = 0
-        self.label_info[cnt] = "background"
-        for cat in self.data["categories"]:
-            cnt += 1
-            self.label_map[cat["id"]] = cnt
-            self.label_info[cnt] = cat["name"]
+            for k, v in list(self.images.items()):
+                if len(v[2]) == 0:
+                    # print("empty image: {}".format(k))
+                    self.images.pop(k)
 
-        # build inference for images
-        for img in self.data["images"]:
-            img_id = img["id"]
-            img_name = img["file_name"]
-            img_size = (img["height"], img["width"])
-            # print(img_name)
-            if img_id in self.images: raise Exception("dulpicated image record")
-            self.images[img_id] = (img_name, img_size, [])
-
-        # read bboxes
-        for bboxes in self.data["annotations"]:
-            img_id = bboxes["image_id"]
-            category_id = bboxes["category_id"]
-            bbox = bboxes["bbox"]
-            bbox_label = self.label_map[bboxes["category_id"]]
-            self.images[img_id][2].append((bbox, bbox_label))
-
-        for k, v in list(self.images.items()):
-            if len(v[2]) == 0:
-                # print("empty image: {}".format(k))
-                self.images.pop(k)
-
-        self.img_keys = list(self.images.keys())
-        self.transform = transform
-        # print("End parsing COCO data, total time {}".format(time.time()-start_time))
-
+            self.img_keys = list(self.images.keys())
+            self.transform = transform
+            # print("End parsing COCO data, total time {}".format(time.time()-start_time))
+             
     @property
     def labelnum(self):
         return len(self.label_info)
@@ -583,6 +595,18 @@ class COCODetection(data.Dataset):
         return len(self.images)
 
     def __getitem__(self, idx):
+        if self.img_folder == None:
+            '''
+            img = torch.randn(3, 300, 300)
+            htot = 320
+            wtot = 320
+            bbox_sizes = torch.rand(8732, 4)
+            bbox_labels = torch.linspace(0, 50, steps=8732)
+            bbox_labels = bbox_labels.long()
+            return img, (htot, wtot), bbox_sizes, bbox_labels
+            '''
+            return self.img, (self.htot, self.wtot), self.bbox_sizes, self.bbox_labels
+
         img_id = self.img_keys[idx]
         img_data = self.images[img_id]
         fn = img_data[0]

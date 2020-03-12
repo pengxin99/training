@@ -25,6 +25,7 @@ sudo docker build -t mlperf/single_stage_detector .
 ```
 
 ### Steps to download data
+**If you have downloaded coco dataset, please ignore this.**
 ```
 cd reference/single_stage_detector/
 source download_dataset.sh
@@ -32,7 +33,37 @@ source download_dataset.sh
 
 ### Steps to run benchmark.
 
+## Steps to launch inference
+
+### CPU
+Configure run_and_time_cpu.sh. And launch it.
+```
+./run_and_time_cpu.sh.py
+```
+Some parameter in run_and_time_cpu.sh:
+MODE : running mode(inference, training)
+BATCH_SIZE : batch size
+THRESHOLD : IoU threshold for training mode
+PERF_PRERUN_WARMUP : number of warmup for performance test
+NUMEPOCHS : epochs to run
+LR : learning rate for training
+TOTLE_ITERATIONS : number of iterations you want
+
 ## Steps to launch training
+
+### CPU
+Configure run_and_time_cpu.sh. And launch it.
+```
+./run_and_time_cpu.sh.py
+```
+Some parameter in run_and_time_cpu.sh:
+MODE : running mode(inference, training)
+BATCH_SIZE : batch size
+THRESHOLD : IoU threshold for training mode
+PERF_PRERUN_WARMUP : number of warmup for performance test
+NUMEPOCHS : epochs to run
+LR : learning rate for training
+TOTLE_ITERATIONS : number of iterations you want
 
 ### NVIDIA DGX-1 (single GPU)
 Launch configuration and system-specific hyperparameters for the NVIDIA DGX-1
